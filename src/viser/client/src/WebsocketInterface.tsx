@@ -5,6 +5,7 @@ import { notifications } from "@mantine/notifications";
 import { ViewerContext } from "./ViewerContext";
 import { syncSearchParamServer } from "./SearchParamsUtils";
 import { WsWorkerIncoming, WsWorkerOutgoing } from "./WebsocketServerWorker";
+import { useBrowserInfoMessage } from "./BrowserInfo";
 
 /** Component for handling websocket connections. */
 export function WebsocketMessageProducer() {
@@ -13,6 +14,8 @@ export function WebsocketMessageProducer() {
   const server = viewer.useGui((state) => state.server);
   const resetGui = viewer.useGui((state) => state.resetGui);
   const resetScene = viewer.sceneTreeActions.resetScene;
+
+  useBrowserInfoMessage();
 
   syncSearchParamServer(server);
 

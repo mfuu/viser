@@ -1530,6 +1530,23 @@ export interface SetGuiPanelLabelMessage {
   type: "SetGuiPanelLabelMessage";
   label: string | null;
 }
+/** Message from client->server to get the browser info.
+ *
+ * (automatically generated)
+ */
+export interface BrowserInfoMessage {
+  type: "BrowserInfoMessage";
+  url: string;
+  origin: string;
+  pathname: string;
+  search_params: { [key: string]: string };
+  user_agent: string;
+  browser_name: string;
+  browser_version: string;
+  os_name: string | null;
+  screen_width: number | null;
+  screen_height: number | null;
+}
 
 export type Message =
   | CameraFrustumMessage
@@ -1621,7 +1638,8 @@ export type Message =
   | ShareUrlRequest
   | ShareUrlUpdated
   | ShareUrlDisconnect
-  | SetGuiPanelLabelMessage;
+  | SetGuiPanelLabelMessage
+  | BrowserInfoMessage;
 export type SceneNodeMessage =
   | CameraFrustumMessage
   | GlbMessage
@@ -1678,7 +1696,6 @@ const typeSetSceneNodeMessage = new Set([
   "BatchedAxesMessage",
   "GridMessage",
   "LabelMessage",
-  "BatchedLabelsMessage",
   "Gui3DMessage",
   "PointCloudMessage",
   "DirectionalLightMessage",

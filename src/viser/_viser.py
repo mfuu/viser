@@ -11,7 +11,7 @@ import warnings
 from collections.abc import Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, ContextManager, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Optional, TypeVar, cast, overload
 
 import imageio.v3 as iio
 import numpy as np
@@ -341,6 +341,8 @@ class ClientHandle(DeprecatedAttributeShim if not TYPE_CHECKING else object):
         """Unique ID for this client."""
         self.camera: CameraHandle = CameraHandle(self)
         """Handle for reading from and manipulating the client's viewport camera."""
+        self.browser_info: Optional[_messages.BrowserInfoMessage] = None
+        """Browser info for this client."""
 
     def flush(self) -> None:
         """Flush the outgoing message buffer. Any buffered messages will immediately be
@@ -649,6 +651,8 @@ class ViserServer(DeprecatedAttributeShim if not TYPE_CHECKING else object):
 
         self._thread_executor = ThreadPoolExecutor(max_workers=32)
 
+        self._client_browser_info_cbs: list[Callable[[ClientHandle, _messages.BrowserInfoMessage], None]] = []
+
         # Run "garbage collector" on message buffer when new clients connect.
         @server.on_client_connect
         async def _(_: infra.WebsockClientConnection) -> None:
@@ -706,6 +710,17 @@ class ViserServer(DeprecatedAttributeShim if not TYPE_CHECKING else object):
                         ).add_done_callback(print_threadpool_errors)
 
             conn.register_handler(_messages.ViewerCameraMessage, handle_camera_message)
+
+            def handle_browser_info(
+                client_id: infra.ClientId, message: _messages.BrowserInfoMessage
+            ) -> None:
+                assert client_id == client.client_id
+
+                client.browser_info = message
+                for cb in self._client_browser_info_cbs:
+                    cb(client, message)
+
+            conn.register_handler(_messages.BrowserInfoMessage, handle_browser_info)
 
         # Remove clients when they disconnect.
         @server.on_client_disconnect
@@ -1106,3 +1121,15 @@ class ViserServer(DeprecatedAttributeShim if not TYPE_CHECKING else object):
         for message in self._websock_server._broadcast_buffer.message_from_id.values():
             serializer._insert_message(message)
         return serializer
+
+    def on_browser_info(self, cb: Callable[[ClientHandle, _messages.BrowserInfoMessage], None]) -> Callable[[ClientHandle, _messages.BrowserInfoMessage], None]:
+        """Register a callback for BrowserInfoMessages from clients.
+
+        Args:
+            cb: Callback function.
+
+        Returns:
+            Callback function.
+        """
+        self._client_browser_info_cbs.append(cb)
+        return cb

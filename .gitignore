@@ -15,6 +15,7 @@ htmlcov
 .envrc
 .vite
 build
+dist
 src/viser/client/build
 src/viser/client/.nodeenv
 examples/assets
