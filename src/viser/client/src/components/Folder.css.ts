@@ -20,6 +20,9 @@ export const folderLabel = style({
   transform: "translateY(-50%)",
   userSelect: "none",
   fontWeight: 500,
+  display: "flex",
+  alignItems: "center",
+  maxWidth: "100%",
 });
 
 export const folderToggleIcon = style({

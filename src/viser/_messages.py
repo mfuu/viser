@@ -2300,3 +2300,38 @@ class CommandTriggerMessage(Message, include_in_scene_serialization=False):
     """Message from client->server when a command is triggered from the command palette."""
 
     uuid: str
+
+
+@dataclasses.dataclass
+class BrowserInfoMessage(Message, include_in_scene_serialization=False):
+    """Message from client->server to get the browser info."""
+
+    url: str
+    """URL of the page."""
+
+    origin: str
+    """Origin of the page."""
+
+    pathname: str
+    """Pathname of the page."""
+
+    search_params: Dict[str, str]
+    """Search query of the page."""
+
+    user_agent: str
+    """User agent string of the browser."""
+
+    browser_name: str
+    """Name of the browser."""
+
+    browser_version: str
+    """Version of the browser."""
+
+    os_name: Optional[str] = None
+    """Name of the operating system."""
+
+    screen_width: Optional[int] = None
+    """Screen width in pixels."""
+
+    screen_height: Optional[int] = None
+    """Screen height in pixels."""

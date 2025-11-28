@@ -17,7 +17,7 @@ only-include = ["src/viser"]
 packages = ["src/viser"]
 
 [project]
-name = "viser"
+name = "viser3d"
 dynamic = ["version"]
 description = "3D visualization + Python"
 readme = "README.md"
