@@ -10,6 +10,8 @@ import { ViewerContext } from "./ViewerContext";
  */
 export function useBrowserInfoMessage() {
   const viewer = useContext(ViewerContext)!;
+  const viewerMutable = viewer.mutable.current;
+  const server = viewer.useGui((state) => state.server);
   const connected = viewer.useGui((state) => state.websocketConnected);
   const pageLoaded = React.useRef(false);
   const hasSentBrowserInfo = React.useRef(false);
@@ -31,7 +33,7 @@ export function useBrowserInfoMessage() {
   }, []);
 
   useEffect(() => {
-    if (!connected || !pageLoaded.current || hasSentBrowserInfo.current) return;
+    if (!server || !connected || !pageLoaded.current || hasSentBrowserInfo.current) return;
 
     const url = new URL(window.location.href);
     const searchParams: Record<string, string> = {};
@@ -55,7 +57,7 @@ export function useBrowserInfoMessage() {
       screen_height: window.screen.height,
     };
 
-    viewer.mutable.current.sendMessage(browserInfo);
+    viewerMutable.sendMessage(browserInfo);
     hasSentBrowserInfo.current = true;
-  }, [pageLoaded, connected]);
+  }, [server, connected, pageLoaded]);
 }
