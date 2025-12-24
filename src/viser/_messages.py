@@ -201,6 +201,9 @@ class ViewerCameraMessage(Message):
 # The list of scene pointer events supported by the viser frontend.
 ScenePointerEventType = Literal["click", "rect-select"]
 
+# The list of scene pointer event keyboard supported by the viser frontend.
+ScenePointerKeyboard = Literal["ctrl", "shift", "alt", "meta"]
+
 
 @dataclasses.dataclass
 class ScenePointerMessage(Message):
@@ -223,11 +226,12 @@ class ScenePointerEnableMessage(Message):
 
     enable: bool
     event_type: ScenePointerEventType
+    keyboard: Optional[ScenePointerKeyboard] = None
 
     @override
     def redundancy_key(self) -> str:
         return (
-            type(self).__name__ + "-" + self.event_type + "-" + str(self.enable).lower()
+            type(self).__name__ + "-" + self.event_type + "-" + str(self.keyboard or "") + "-" + str(self.enable).lower()
         )
 
 

@@ -191,10 +191,15 @@ function useMessageHandler() {
           ? message.event_type
           : false;
 
+        // Update keyboard modifier for pointer events.
+        viewerMutable.scenePointerInfo.keyboard = message.keyboard;
+
         // Update cursor to indicate whether the scene can be clicked.
-        viewerMutable.canvas!.style.cursor = message.enable
-          ? "pointer"
-          : "auto";
+        if (!message.keyboard) {
+          viewerMutable.canvas!.style.cursor = message.enable
+            ? "pointer"
+            : "auto";
+        }
         return;
       }
 

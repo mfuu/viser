@@ -1142,6 +1142,7 @@ export interface ScenePointerEnableMessage {
   type: "ScenePointerEnableMessage";
   enable: boolean;
   event_type: "click" | "rect-select";
+  keyboard: "ctrl" | "shift" | "alt" | "meta" | null;
 }
 /** Environment Map message.
  *
