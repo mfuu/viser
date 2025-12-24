@@ -12,7 +12,7 @@ export function useBrowserInfoMessage() {
   const viewer = useContext(ViewerContext)!;
   const viewerMutable = viewer.mutable.current;
   const server = viewer.useGui((state) => state.server);
-  const connected = viewer.useGui((state) => state.websocketConnected);
+  const connected = viewer.useGui((state) => state.websocketState === "connected");
   const pageLoaded = React.useRef(false);
   const hasSentBrowserInfo = React.useRef(false);
 
