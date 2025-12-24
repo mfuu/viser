@@ -31,11 +31,11 @@ Examples and documentation: https://viser.studio
 
 ## Installation
 
-You can install `viser` with `pip`:
+You can install `viser3d` with `pip`:
 
 ```bash
-pip install viser            # Core dependencies only.
-pip install viser[examples]  # To include example dependencies.
+pip install viser3d            # Core dependencies only.
+pip install viser3d[examples]  # To include example dependencies.
 ```
 
 That's it! To learn more, we recommend looking at the examples in the [documentation](https://viser.studio/).

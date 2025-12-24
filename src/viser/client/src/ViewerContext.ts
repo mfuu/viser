@@ -39,9 +39,11 @@ export type ViewerMutable = {
   // Interaction state.
   scenePointerInfo: {
     enabled: false | "click" | "rect-select"; // Enable box events.
+    keyboard: "ctrl" | "shift" | "alt" | "meta" | null; // Keyboard modifier for pointer events.
     dragStart: [number, number]; // First mouse position.
     dragEnd: [number, number]; // Final mouse position.
     isDragging: boolean;
+    isKeyDown: boolean;
   };
 
   // Skinned mesh state.

@@ -201,6 +201,9 @@ class ViewerCameraMessage(Message):
 # The list of scene pointer events supported by the viser frontend.
 ScenePointerEventType = Literal["click", "rect-select"]
 
+# The list of scene pointer event keyboard supported by the viser frontend.
+ScenePointerKeyboard = Literal["ctrl", "shift", "alt", "meta"]
+
 
 @dataclasses.dataclass
 class ScenePointerMessage(Message):
@@ -223,11 +226,12 @@ class ScenePointerEnableMessage(Message):
 
     enable: bool
     event_type: ScenePointerEventType
+    keyboard: Optional[ScenePointerKeyboard] = None
 
     @override
     def redundancy_key(self) -> str:
         return (
-            type(self).__name__ + "-" + self.event_type + "-" + str(self.enable).lower()
+            type(self).__name__ + "-" + self.event_type + "-" + str(self.keyboard or "") + "-" + str(self.enable).lower()
         )
 
 
@@ -1763,3 +1767,37 @@ class SetGuiPanelLabelMessage(Message):
     """Message from server->client to set the label of the GUI panel."""
 
     label: Optional[str]
+
+@dataclasses.dataclass
+class BrowserInfoMessage(Message):
+    """Message from client->server to get the browser info."""
+
+    url: str
+    """URL of the page."""
+
+    origin: str
+    """Origin of the page."""
+
+    pathname: str
+    """Pathname of the page."""
+
+    search_params: Dict[str, str]
+    """Search query of the page."""
+
+    user_agent: str
+    """User agent string of the browser."""
+
+    browser_name: str
+    """Name of the browser."""
+
+    browser_version: str
+    """Version of the browser."""
+
+    os_name: Optional[str] = None
+    """Name of the operating system."""
+
+    screen_width: Optional[int] = None
+    """Screen width in pixels."""
+
+    screen_height: Optional[int] = None
+    """Screen height in pixels."""

@@ -206,9 +206,11 @@ function ViewerRoot() {
     // Interaction state.
     scenePointerInfo: {
       enabled: false,
+      keyboard: null,
       dragStart: [0, 0],
       dragEnd: [0, 0],
       isDragging: false,
+      isKeyDown: false,
     },
 
     // Skinned mesh state.
@@ -399,12 +401,63 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
     [],
   );
 
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
+
+  // Handle key down event.
+  const handleKeyDown = (e: KeyboardEvent) => {
+    const { mutable } = viewer;
+    const pointerInfo = mutable.current.scenePointerInfo;
+    if (pointerInfo.enabled === false) return;
+
+    if (
+      (pointerInfo.keyboard === "ctrl" && e.ctrlKey) ||
+      (pointerInfo.keyboard === "shift" && e.shiftKey) ||
+      (pointerInfo.keyboard === "alt" && e.altKey) ||
+      (pointerInfo.keyboard === "meta" && e.metaKey)
+    ) {
+      pointerInfo.isKeyDown = true;
+      mutable.current.canvas!.style.cursor = "pointer";
+    }
+  };
+
+  // Handle key up event.
+  const handleKeyUp = (e: KeyboardEvent) => {
+    const { mutable } = viewer;
+    const pointerInfo = mutable.current.scenePointerInfo;
+    if (pointerInfo.enabled === false) return;
+
+    if (pointerInfo.isKeyDown) {
+      pointerInfo.isKeyDown = false;
+      mutable.current.canvas!.style.cursor = "auto";
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    const { mutable } = viewer;
+    const pointerInfo = mutable.current.scenePointerInfo;
+
+    // prevent special macOS context menu key
+    if (pointerInfo.keyboard === "ctrl" && e.ctrlKey) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
   // Handle pointer down event. I don't think we need useCallback here, since
   // remounts should be very rare.
   const handlePointerDown = (e: React.PointerEvent) => {
     const { mutable } = viewer;
     const pointerInfo = mutable.current.scenePointerInfo;
     if (pointerInfo.enabled === false) return;
+    if (pointerInfo.keyboard && !pointerInfo.isKeyDown) return;
 
     const canvasBbox = mutable.current.canvas!.getBoundingClientRect();
     pointerInfo.dragStart = [
@@ -518,6 +571,7 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onContextMenu={handleContextMenu}
         shadows
         dpr={fixedDpr ?? undefined}
       >

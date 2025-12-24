@@ -166,6 +166,7 @@ class SceneApi:
         ) = None
         self._scene_pointer_done_cb: Callable[[], None | Coroutine] = lambda: None
         self._scene_pointer_event_type: _messages.ScenePointerEventType | None = None
+        self._scene_pointer_keyboard: _messages.ScenePointerKeyboard | None = None
 
         # Set up world axes handle.
         self.world_axes: FrameHandle = self.add_frame(
@@ -2421,7 +2422,7 @@ class SceneApi:
             ).add_done_callback(print_threadpool_errors)
 
     def on_pointer_event(
-        self, event_type: Literal["click", "rect-select"]
+        self, event_type: Literal["click", "rect-select"], keyboard: Literal["ctrl", "shift", "alt", "meta"] | None = None
     ) -> Callable[
         [Callable[[ScenePointerEvent], None]], Callable[[ScenePointerEvent], None]
     ]:
@@ -2429,9 +2430,12 @@ class SceneApi:
 
         Args:
             event_type: event to listen to.
+            keyboard: if not None, the event will only be triggered when the keyboard key is pressed.
         """
         # Ensure the event type is valid.
         assert event_type in get_args(_messages.ScenePointerEventType)
+        # Ensure the keyboard key is valid.
+        assert keyboard is None or keyboard in get_args(_messages.ScenePointerKeyboard)
 
         from ._viser import ClientHandle, ViserServer
 
@@ -2463,9 +2467,10 @@ class SceneApi:
 
             self._scene_pointer_cb = func
             self._scene_pointer_event_type = event_type
+            self._scene_pointer_keyboard = keyboard
 
             self._websock_interface.queue_message(
-                _messages.ScenePointerEnableMessage(enable=True, event_type=event_type)
+                _messages.ScenePointerEnableMessage(enable=True, event_type=event_type, keyboard=keyboard)
             )
             return func
 
@@ -2502,9 +2507,10 @@ class SceneApi:
 
         # Notify client that the listener has been removed.
         event_type = self._scene_pointer_event_type
+        keyboard = self._scene_pointer_keyboard
         assert event_type is not None
         self._websock_interface.queue_message(
-            _messages.ScenePointerEnableMessage(enable=False, event_type=event_type)
+            _messages.ScenePointerEnableMessage(enable=False, event_type=event_type, keyboard=keyboard)
         )
         self._owner.flush()
 
@@ -2518,6 +2524,7 @@ class SceneApi:
         self._scene_pointer_cb = None
         self._scene_pointer_done_cb = lambda: None
         self._scene_pointer_event_type = None
+        self._scene_pointer_binding = None
 
     @deprecated_positional_shim
     def add_3d_gui_container(
