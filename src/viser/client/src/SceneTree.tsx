@@ -1,11 +1,11 @@
 import {
   CatmullRomLine,
   CubicBezierLine,
-  Grid,
   PivotControls,
 } from "@react-three/drei";
+import { Grid } from "./Grid";
 import { ContextBridge, useContextBridge } from "its-fine";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import React, { useEffect } from "react";
 import * as THREE from "three";
 
@@ -42,7 +42,7 @@ import {
   ViserLabel,
 } from "./ThreeAssets";
 import { CameraFrustumComponent } from "./CameraFrustumVariants";
-import { SceneNodeMessage } from "./WebsocketMessages";
+import { SceneNodeMessage, SpotLightMessage } from "./WebsocketMessages";
 import { SplatObject } from "./Splatting/GaussianSplats";
 import { Paper } from "@mantine/core";
 import GeneratedGuiContainer from "./ControlPanel/Generated";
@@ -52,10 +52,12 @@ import { CsmDirectionalLight } from "./CsmDirectionalLight";
 import { BasicMesh } from "./mesh/BasicMesh";
 import { BoxMesh } from "./mesh/BoxMesh";
 import { IcosphereMesh } from "./mesh/IcosphereMesh";
+import { CylinderMesh } from "./mesh/CylinderMesh";
 import { SkinnedMesh } from "./mesh/SkinnedMesh";
 import { BatchedMesh } from "./mesh/BatchedMesh";
 import { SingleGlbAsset } from "./mesh/SingleGlbAsset";
 import { BatchedGlbAsset } from "./mesh/BatchedGlbAsset";
+import { normalizeScale } from "./utils/normalizeScale";
 
 function rgbToInt(rgb: [number, number, number]): number {
   return (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
@@ -105,6 +107,50 @@ export type MakeObject = (
   children: React.ReactNode,
 ) => React.ReactNode;
 
+/** SpotLight wrapper that sets up a target object so the light points in the
+ *  correct direction rather than always toward the world origin. */
+const ViserSpotLight = React.forwardRef<
+  THREE.Group,
+  {
+    message: SpotLightMessage;
+    shadowArgs: Record<string, any>;
+    children?: React.ReactNode;
+  }
+>(function ViserSpotLight({ message, shadowArgs: sa, children }, ref) {
+  const spotlightRef = React.useRef<THREE.SpotLight>(null);
+  const targetRef = React.useRef<THREE.Object3D>(null);
+  const p = message.props;
+
+  useEffect(() => {
+    const light = spotlightRef.current;
+    const target = targetRef.current;
+    if (light && target) {
+      light.target = target;
+    }
+  }, []);
+
+  return (
+    <group ref={ref}>
+      <spotLight
+        ref={spotlightRef}
+        intensity={p.intensity}
+        color={rgbToInt(p.color)}
+        distance={p.distance}
+        angle={p.angle}
+        penumbra={p.penumbra}
+        decay={p.decay}
+        castShadow={p.cast_shadow}
+        {...sa}
+      />
+      <object3D
+        ref={targetRef}
+        position={[p.direction[0], p.direction[1], p.direction[2]]}
+      />
+      {children}
+    </group>
+  );
+});
+
 function createObjectFactory(
   message: SceneNodeMessage | undefined,
   viewer: ViewerContextContents,
@@ -130,6 +176,7 @@ function createObjectFactory(
             axesRadius={message.props.axes_radius}
             originRadius={message.props.origin_radius}
             originColor={rgbToInt(message.props.origin_color)}
+            scale={message.props.scale}
           >
             {children}
           </CoordinateFrame>
@@ -148,6 +195,7 @@ function createObjectFactory(
             batched_scales={message.props.batched_scales}
             axes_length={message.props.axes_length}
             axes_radius={message.props.axes_radius}
+            scale={message.props.scale}
           >
             {children}
           </InstancedAxes>
@@ -186,57 +234,29 @@ function createObjectFactory(
                     new THREE.Euler(-Math.PI / 2.0, 0.0, -Math.PI / 2.0),
       );
 
-      // When rotations are identity: plane is XY, while grid is XZ.
-      const planeQuaternion = new THREE.Quaternion()
-        .setFromEuler(new THREE.Euler(-Math.PI / 2, 0.0, 0.0))
-        .premultiply(gridQuaternion);
-
-      let shadowPlane;
-      if (message.props.shadow_opacity > 0.0) {
-        // Use very large dimensions for infinite grids to ensure shadows are visible.
-        const shadowWidth = message.props.infinite_grid
-          ? 10000
-          : message.props.width;
-        const shadowHeight = message.props.infinite_grid
-          ? 10000
-          : message.props.height;
-        shadowPlane = (
-          <mesh
-            receiveShadow
-            position={[0.0, 0.0, -0.01]}
-            quaternion={planeQuaternion}
-          >
-            <planeGeometry args={[shadowWidth, shadowHeight]} />
-            <shadowMaterial
-              opacity={message.props.shadow_opacity}
-              color={0x000000}
-              depthWrite={false}
-            />
-          </mesh>
-        );
-      } else {
-        // when opacity = 0.0, no shadowPlane for performance
-        shadowPlane = null;
-      }
       return {
         makeObject: (ref, children) => (
           <group ref={ref}>
-            <Grid
-              args={[message.props.width, message.props.height]}
-              side={THREE.DoubleSide}
-              cellColor={rgbToInt(message.props.cell_color)}
-              cellThickness={message.props.cell_thickness}
-              cellSize={message.props.cell_size}
-              sectionColor={rgbToInt(message.props.section_color)}
-              sectionThickness={message.props.section_thickness}
-              sectionSize={message.props.section_size}
-              infiniteGrid={message.props.infinite_grid}
-              fadeDistance={message.props.fade_distance}
-              fadeStrength={message.props.fade_strength}
-              fadeFrom={message.props.fade_from === "camera" ? 1 : 0}
-              quaternion={gridQuaternion}
-            />
-            {shadowPlane}
+            <group scale={normalizeScale(message.props.scale)}>
+              <Grid
+                args={[message.props.width, message.props.height]}
+                side={THREE.DoubleSide}
+                cellColor={rgbToInt(message.props.cell_color)}
+                cellThickness={message.props.cell_thickness}
+                cellSize={message.props.cell_size}
+                sectionColor={rgbToInt(message.props.section_color)}
+                sectionThickness={message.props.section_thickness}
+                sectionSize={message.props.section_size}
+                infiniteGrid={message.props.infinite_grid}
+                fadeDistance={message.props.fade_distance}
+                fadeStrength={message.props.fade_strength}
+                fadeFrom={message.props.fade_from === "camera" ? 1 : 0}
+                planeColor={rgbToInt(message.props.plane_color)}
+                planeOpacity={message.props.plane_opacity}
+                shadowOpacity={message.props.shadow_opacity}
+                quaternion={gridQuaternion}
+              />
+            </group>
             {children}
           </group>
         ),
@@ -288,6 +308,15 @@ function createObjectFactory(
           <IcosphereMesh ref={ref} {...message}>
             {children}
           </IcosphereMesh>
+        ),
+      };
+    }
+    case "CylinderMessage": {
+      return {
+        makeObject: (ref, children) => (
+          <CylinderMesh ref={ref} {...message}>
+            {children}
+          </CylinderMesh>
         ),
       };
     }
@@ -483,16 +512,18 @@ function createObjectFactory(
         makeObject: (ref, children) => {
           return (
             <group ref={ref}>
-              <CatmullRomLine
-                points={tripletListFromFloat32Buffer(message.props.points)}
-                closed={message.props.closed}
-                curveType={message.props.curve_type}
-                tension={message.props.tension}
-                lineWidth={message.props.line_width}
-                color={rgbToInt(message.props.color)}
-                // Sketchy cast needed due to https://github.com/pmndrs/drei/issues/1476.
-                segments={(message.props.segments ?? undefined) as undefined}
-              />
+              <group scale={normalizeScale(message.props.scale)}>
+                <CatmullRomLine
+                  points={tripletListFromFloat32Buffer(message.props.points)}
+                  closed={message.props.closed}
+                  curveType={message.props.curve_type}
+                  tension={message.props.tension}
+                  lineWidth={message.props.line_width}
+                  color={rgbToInt(message.props.color)}
+                  // Sketchy cast needed due to https://github.com/pmndrs/drei/issues/1476.
+                  segments={(message.props.segments ?? undefined) as undefined}
+                />
+              </group>
               {children}
             </group>
           );
@@ -508,19 +539,23 @@ function createObjectFactory(
           );
           return (
             <group ref={ref}>
-              {[...Array(points.length - 1).keys()].map((i) => (
-                <CubicBezierLine
-                  key={i}
-                  start={points[i]}
-                  end={points[i + 1]}
-                  midA={controlPoints[2 * i]}
-                  midB={controlPoints[2 * i + 1]}
-                  lineWidth={message.props.line_width}
-                  color={rgbToInt(message.props.color)}
-                  // Sketchy cast needed due to https://github.com/pmndrs/drei/issues/1476.
-                  segments={(message.props.segments ?? undefined) as undefined}
-                ></CubicBezierLine>
-              ))}
+              <group scale={normalizeScale(message.props.scale)}>
+                {[...Array(points.length - 1).keys()].map((i) => (
+                  <CubicBezierLine
+                    key={i}
+                    start={points[i]}
+                    end={points[i + 1]}
+                    midA={controlPoints[2 * i]}
+                    midB={controlPoints[2 * i + 1]}
+                    lineWidth={message.props.line_width}
+                    color={rgbToInt(message.props.color)}
+                    // Sketchy cast needed due to https://github.com/pmndrs/drei/issues/1476.
+                    segments={
+                      (message.props.segments ?? undefined) as undefined
+                    }
+                  ></CubicBezierLine>
+                ))}
+              </group>
               {children}
             </group>
           );
@@ -530,20 +565,22 @@ function createObjectFactory(
     case "GaussianSplatsMessage": {
       return {
         makeObject: (ref, children) => (
-          <SplatObject
-            ref={ref}
-            buffer={
-              new Uint32Array(
-                message.props.buffer.buffer.slice(
-                  message.props.buffer.byteOffset,
-                  message.props.buffer.byteOffset +
-                    message.props.buffer.byteLength,
-                ),
-              )
-            }
-          >
+          <group ref={ref}>
+            <group scale={normalizeScale(message.props.scale)}>
+              <SplatObject
+                buffer={
+                  new Uint32Array(
+                    message.props.buffer.buffer.slice(
+                      message.props.buffer.byteOffset,
+                      message.props.buffer.byteOffset +
+                        message.props.buffer.byteLength,
+                    ),
+                  )
+                }
+              />
+            </group>
             {children}
-          </SplatObject>
+          </group>
         ),
       };
     }
@@ -640,19 +677,9 @@ function createObjectFactory(
     case "SpotLightMessage": {
       return {
         makeObject: (ref, children) => (
-          <spotLight
-            ref={ref}
-            intensity={message.props.intensity}
-            color={rgbToInt(message.props.color)}
-            distance={message.props.distance}
-            angle={message.props.angle}
-            penumbra={message.props.penumbra}
-            decay={message.props.decay}
-            castShadow={message.props.cast_shadow}
-            {...shadowArgs}
-          >
+          <ViserSpotLight ref={ref} message={message} shadowArgs={shadowArgs}>
             {children}
-          </spotLight>
+          </ViserSpotLight>
         ),
       };
     }
@@ -721,10 +748,80 @@ export function SceneNodeThreeObject(props: { name: string }) {
     });
   }, [objNode]);
 
+  // Track hover state.
+  const hoveredRef = React.useRef<HoverState>({
+    isHovered: false,
+    instanceId: null,
+  });
+
+  // Track last pointer position for re-raycasting when mesh changes.
+  const lastPointerPos = React.useRef<{
+    clientX: number;
+    clientY: number;
+  } | null>(null);
+
+  // Frame counter for delayed hover recheck after objNode changes.
+  // We wait a few frames to ensure the new mesh geometry is fully rendered.
+  const hoverRecheckCountdown = React.useRef(0);
+  const isFirstObjNode = React.useRef(true);
+  React.useEffect(() => {
+    if (isFirstObjNode.current) {
+      isFirstObjNode.current = false;
+      return;
+    }
+    if (hoveredRef.current.isHovered) {
+      // Wait 2 frames for the new mesh to be fully rendered.
+      hoverRecheckCountdown.current = 2;
+    }
+  }, [objNode]);
+
+  // Get R3F state for raycasting.
+  const { raycaster, camera } = useThree();
+
+  // Reusable Vector2 for hover recheck raycasting.
+  const pointerNDC = React.useMemo(() => new THREE.Vector2(), []);
+
   // Update attributes on a per-frame basis. Currently does redundant work,
   // although this shouldn't be a bottleneck.
   useFrame(
     () => {
+      // Re-check hover state after objNode changes (mesh geometry update).
+      if (hoverRecheckCountdown.current > 0) {
+        hoverRecheckCountdown.current--;
+        if (
+          hoverRecheckCountdown.current === 0 &&
+          hoveredRef.current.isHovered &&
+          groupRef.current &&
+          lastPointerPos.current
+        ) {
+          // Compute NDC from stored pointer position.
+          const canvas = viewerMutable.canvas;
+          if (canvas) {
+            const rect = canvas.getBoundingClientRect();
+            pointerNDC.set(
+              ((lastPointerPos.current.clientX - rect.left) / rect.width) * 2 -
+                1,
+              -((lastPointerPos.current.clientY - rect.top) / rect.height) * 2 +
+                1,
+            );
+            raycaster.setFromCamera(pointerNDC, camera);
+            const intersects = raycaster.intersectObject(
+              groupRef.current,
+              true,
+            );
+            if (intersects.length === 0) {
+              // Pointer is no longer over this mesh, reset hover state.
+              hoveredRef.current.isHovered = false;
+              hoveredRef.current.instanceId = null;
+              viewerMutable.hoveredElementsCount--;
+              if (viewerMutable.hoveredElementsCount === 0) {
+                document.body.style.cursor = "auto";
+              }
+            }
+          }
+        }
+      }
+
       // Use getState() for performance in render loops (no re-renders).
       const node = viewer.useSceneTree.getState()[props.name];
 
@@ -758,6 +855,17 @@ export function SceneNodeThreeObject(props: { name: string }) {
       objRef.current.visible =
         node.overrideVisibility ?? node.visibility ?? true;
 
+      // If a clickable node becomes invisible while hovered, clean up hover
+      // state so the cursor doesn't stay stuck as "pointer".
+      if (!node.effectiveVisibility && hoveredRef.current.isHovered && clickable) {
+        hoveredRef.current.isHovered = false;
+        hoveredRef.current.instanceId = null;
+        viewerMutable.hoveredElementsCount--;
+        if (viewerMutable.hoveredElementsCount === 0) {
+          document.body.style.cursor = "auto";
+        }
+      }
+
       if (node.poseUpdateState == "needsUpdate") {
         // Update pose state through zustand action.
         updateNodeAttributes(props.name, {
@@ -789,12 +897,6 @@ export function SceneNodeThreeObject(props: { name: string }) {
   // Clicking logic.
   const sendClicksThrottled = useThrottledMessageSender(50).send;
 
-  // Track hover state.
-  const hoveredRef = React.useRef<HoverState>({
-    isHovered: false,
-    instanceId: null,
-  });
-
   // Handle case where clickable is toggled to false while still hovered.
   if (!clickable && hoveredRef.current.isHovered) {
     hoveredRef.current.isHovered = false;
@@ -804,17 +906,18 @@ export function SceneNodeThreeObject(props: { name: string }) {
     }
   }
 
-  // Reset hover state on unmount.
+  // Reset hover state on unmount only.
   useEffect(() => {
     return () => {
       if (hoveredRef.current.isHovered) {
+        hoveredRef.current.isHovered = false;
         viewerMutable.hoveredElementsCount--;
         if (viewerMutable.hoveredElementsCount === 0) {
           document.body.style.cursor = "auto";
         }
       }
     };
-  });
+  }, []);
 
   const dragInfo = React.useRef({
     dragging: false,
@@ -855,6 +958,13 @@ export function SceneNodeThreeObject(props: { name: string }) {
               : (e) => {
                   if (!isDisplayed()) return;
                   e.stopPropagation();
+
+                  // Update pointer position for re-raycasting when mesh changes.
+                  lastPointerPos.current = {
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                  };
+
                   const state = dragInfo.current;
                   const canvasBbox =
                     viewerMutable.canvas!.getBoundingClientRect();
@@ -911,6 +1021,15 @@ export function SceneNodeThreeObject(props: { name: string }) {
                   if (!isDisplayed()) return;
                   e.stopPropagation();
 
+                  // Store pointer position for re-raycasting when mesh changes.
+                  lastPointerPos.current = {
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                  };
+
+                  // Guard against double-increment if already hovered.
+                  if (hoveredRef.current.isHovered) return;
+
                   // Update hover state
                   hoveredRef.current.isHovered = true;
                   // Store the instanceId in the hover ref
@@ -928,6 +1047,8 @@ export function SceneNodeThreeObject(props: { name: string }) {
               ? undefined
               : () => {
                   if (!isDisplayed()) return;
+                  // Guard against decrementing if already reset (e.g., by objNode change).
+                  if (!hoveredRef.current.isHovered) return;
 
                   // Update hover state
                   hoveredRef.current.isHovered = false;

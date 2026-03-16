@@ -5,6 +5,7 @@ import { BatchedMeshesMessage } from "../WebsocketMessages";
 import { InstancedMesh2 } from "@three.ez/instanced-mesh";
 import { ViewerContext } from "../ViewerContext";
 import { BatchedMeshBase } from "./BatchedMeshBase";
+import { normalizeScale } from "../utils/normalizeScale";
 
 /**
  * Component for rendering batched/instanced meshes
@@ -20,16 +21,20 @@ export const BatchedMesh = React.forwardRef<
   // Create a material based on the message props.
   const material = useMemo(() => {
     // Create the material with properties from the message.
+    // When per-instance opacities exist, material opacity stays at 1.0.
     const mat = createStandardMaterial({
       material: message.props.material,
       wireframe: message.props.wireframe,
-      opacity: message.props.opacity,
+      opacity: message.props.batched_opacities ? null : message.props.opacity,
       flat_shading: message.props.flat_shading,
       side: message.props.side,
     });
 
-    // Set additional properties.
-    if (message.props.opacity !== null && message.props.opacity < 1.0) {
+    // Set transparent flag if any transparency is involved.
+    if (
+      (message.props.opacity !== null && message.props.opacity < 1.0) ||
+      message.props.batched_opacities !== null
+    ) {
       mat.transparent = true;
     }
 
@@ -38,6 +43,7 @@ export const BatchedMesh = React.forwardRef<
     message.props.material,
     message.props.wireframe,
     message.props.opacity,
+    message.props.batched_opacities,
     message.props.flat_shading,
     message.props.side,
   ]);
@@ -76,18 +82,22 @@ export const BatchedMesh = React.forwardRef<
 
   return (
     <group ref={ref}>
-      <BatchedMeshBase
-        geometry={geometry}
-        material={material}
-        batched_positions={message.props.batched_positions}
-        batched_wxyzs={message.props.batched_wxyzs}
-        batched_scales={message.props.batched_scales}
-        batched_colors={message.props.batched_colors}
-        lod={message.props.lod}
-        cast_shadow={message.props.cast_shadow}
-        receive_shadow={message.props.receive_shadow}
-        clickable={clickable}
-      />
+      <group scale={normalizeScale(message.props.scale)}>
+        <BatchedMeshBase
+          geometry={geometry}
+          material={material}
+          batched_positions={message.props.batched_positions}
+          batched_wxyzs={message.props.batched_wxyzs}
+          batched_scales={message.props.batched_scales}
+          batched_colors={message.props.batched_colors}
+          opacity={message.props.opacity}
+          batched_opacities={message.props.batched_opacities}
+          lod={message.props.lod}
+          cast_shadow={message.props.cast_shadow}
+          receive_shadow={message.props.receive_shadow}
+          clickable={clickable}
+        />
+      </group>
       {children}
     </group>
   );

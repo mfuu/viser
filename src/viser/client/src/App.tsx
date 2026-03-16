@@ -6,7 +6,8 @@ import "./index.css";
 
 import { useInView } from "react-intersection-observer";
 import { Notifications } from "@mantine/notifications";
-import { Environment, PerformanceMonitor, Stats } from "@react-three/drei";
+import { PerformanceMonitor, Stats } from "@react-three/drei";
+import { HDRJPGEnvironment } from "./HDRJPGEnvironment";
 import * as THREE from "three";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
 import React, { useEffect, useMemo } from "react";
@@ -39,17 +40,48 @@ import { ViserModal } from "./Modal";
 import { useSceneTreeState } from "./SceneTreeState";
 import { useEnvironmentState } from "./EnvironmentState";
 import { useDevSettingsStore } from "./DevSettingsStore";
+import { useInitialCameraState } from "./InitialCameraState";
 import { useThrottledMessageSender } from "./WebsocketUtils";
 import { rayToViserCoords } from "./WorldTransformUtils";
 import { theme } from "./AppTheme";
 import { FrameSynchronizedMessageHandler } from "./MessageHandler";
-import { PlaybackFromFile } from "./FilePlayback";
+import { PlaybackFromFile, PlaybackFromEmbedData } from "./FilePlayback";
 import { SplatRenderContext } from "./Splatting/GaussianSplats";
 import { BrowserWarning } from "./BrowserWarning";
 import { MacWindowWrapper } from "./MacWindowWrapper";
 import { CsmDirectionalLight } from "./CsmDirectionalLight";
 import { VISER_VERSION, GITHUB_CONTRIBUTORS, Contributor } from "./VersionInfo";
 import { BatchedLabelManager } from "./BatchedLabelManager";
+
+// Import logo as asset for proper bundling/inlining.
+import logoSvg from "./assets/logo.svg";
+
+// Import HDRI files as assets for proper bundling/inlining.
+// These are HDR JPEG (gainmap) format files that are ~10x smaller than traditional HDR.
+import hdriApartment from "./assets/lebombo_1k.jpg";
+import hdriCity from "./assets/potsdamer_platz_1k.jpg";
+import hdriDawn from "./assets/kiara_1_dawn_1k.jpg";
+import hdriForest from "./assets/forest_slope_1k.jpg";
+import hdriLobby from "./assets/st_fagans_interior_1k.jpg";
+import hdriNight from "./assets/dikhololo_night_1k.jpg";
+import hdriPark from "./assets/rooitou_park_1k.jpg";
+import hdriStudio from "./assets/studio_small_03_1k.jpg";
+import hdriSunset from "./assets/venice_sunset_1k.jpg";
+import hdriWarehouse from "./assets/empty_warehouse_01_1k.jpg";
+
+// Map preset names to imported HDRI assets.
+const hdriPresets: Record<string, string> = {
+  apartment: hdriApartment,
+  city: hdriCity,
+  dawn: hdriDawn,
+  forest: hdriForest,
+  lobby: hdriLobby,
+  night: hdriNight,
+  park: hdriPark,
+  studio: hdriStudio,
+  sunset: hdriSunset,
+  warehouse: hdriWarehouse,
+};
 
 // ======= Utility functions =======
 
@@ -168,24 +200,34 @@ function ViewerRoot() {
 
   const searchParams = new URLSearchParams(window.location.search);
   const playbackPath = searchParams.get("playbackPath");
+
+  // Check for embedded scene data via window global.
+  const embedData = (window as any).__VISER_EMBED_DATA__ as string | undefined;
+  const embedConfig = (window as any).__VISER_EMBED_CONFIG__ as
+    | { darkMode?: boolean }
+    | undefined;
   const darkMode = searchParams.get("darkMode") !== null;
 
   // Create a message source string.
-  const messageSource = playbackPath === null ? "websocket" : "file_playback";
+  const messageSource = embedData
+    ? "embed"
+    : playbackPath === null
+      ? "websocket"
+      : "file_playback";
 
   // Create a single ref with all mutable state.
   const nodeRefFromName = {};
   const mutable = React.useRef<ViewerMutable>({
     // Function references with default implementations.
     sendMessage:
-      playbackPath == null
+      messageSource === "websocket"
         ? (message: any) =>
             console.log(
               `Tried to send ${message.type} but websocket is not connected!`,
             )
         : () => null,
     sendCamera: null,
-    resetCameraView: null,
+    resetCameraPose: null,
 
     // DOM/Three.js references.
     canvas: null,
@@ -229,6 +271,36 @@ function ViewerRoot() {
   // Create the dev settings store.
   const devSettingsStore = useDevSettingsStore();
 
+  // Create the initial camera store with URL params.
+  const initialCameraState = useInitialCameraState(
+    // Parse URL params once during initialization.
+    React.useMemo(() => {
+      // Helper to parse and validate a vector URL param.
+      const parseVec3 = (param: string): [number, number, number] | null => {
+        const str = searchParams.get(param);
+        if (str === null) return null;
+        const parts = str.split(",").map(Number);
+        if (parts.length !== 3 || !parts.every(Number.isFinite)) return null;
+        return parts as [number, number, number];
+      };
+      // Helper to parse and validate a scalar URL param.
+      const parseScalar = (param: string): number | null => {
+        const str = searchParams.get(param);
+        if (str === null) return null;
+        const val = Number(str);
+        return Number.isFinite(val) ? val : null;
+      };
+      return {
+        position: parseVec3("initialCameraPosition"),
+        lookAt: parseVec3("initialCameraLookAt"),
+        up: parseVec3("initialCameraUp"),
+        fov: parseScalar("initialCameraFov"),
+        near: parseScalar("initialCameraNear"),
+        far: parseScalar("initialCameraFar"),
+      };
+    }, []),
+  );
+
   // Create the context value with hooks and single ref.
   const viewer: ViewerContextContents = {
     messageSource,
@@ -237,11 +309,13 @@ function ViewerRoot() {
     useEnvironment: environmentState,
     useGui: useGuiState(initialServer),
     useDevSettings: devSettingsStore,
+    useInitialCamera: initialCameraState,
     mutable,
   };
 
-  // Apply URL dark mode setting if provided.
-  if (darkMode) viewer.useGui.getState().theme.dark_mode = darkMode;
+  // Apply dark mode setting if provided via URL or embed config.
+  const effectiveDarkMode = darkMode || embedConfig?.darkMode;
+  if (effectiveDarkMode) viewer.useGui.getState().theme.dark_mode = true;
 
   return (
     <ViewerContext.Provider value={viewer}>
@@ -249,6 +323,9 @@ function ViewerRoot() {
         {messageSource === "websocket" && <WebsocketMessageProducer />}
         {messageSource === "file_playback" && (
           <PlaybackFromFile fileUrl={playbackPath!} />
+        )}
+        {messageSource === "embed" && (
+          <PlaybackFromEmbedData base64Data={embedData!} />
         )}
       </ViewerContents>
     </ViewerContext.Provider>
@@ -554,6 +631,7 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           </BatchedLabelManager>
         </SplatRenderContext>
         <DefaultLights />
+        <SceneFog />
       </>
     ),
     [children, memoizedCameraControls],
@@ -564,8 +642,7 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
       style={{ position: "relative", zIndex: 0, width: "100%", height: "100%" }}
     >
       <Canvas
-        camera={{ position: [-3.0, 3.0, -3.0], near: 0.01, far: 1000.0 }}
-        gl={{ preserveDrawingBuffer: true }}
+        gl={{ preserveDrawingBuffer: true, logarithmicDepthBuffer: true }}
         style={{ width: "100%", height: "100%" }}
         ref={(el) => (viewer.mutable.current.canvas = el)}
         onPointerDown={handlePointerDown}
@@ -657,22 +734,9 @@ function DefaultLights() {
   );
 
   // Calculate environment map.
+  // Uses HDR JPEG (gainmap) format for smaller file sizes (~10x reduction).
   const envMapNode = useMemo(() => {
     if (environmentMap.hdri === null) return null;
-
-    // HDRI presets mapping.
-    const presetsObj = {
-      apartment: "lebombo_1k.hdr",
-      city: "potsdamer_platz_1k.hdr",
-      dawn: "kiara_1_dawn_1k.hdr",
-      forest: "forest_slope_1k.hdr",
-      lobby: "st_fagans_interior_1k.hdr",
-      night: "dikhololo_night_1k.hdr",
-      park: "rooitou_park_1k.hdr",
-      studio: "studio_small_03_1k.hdr",
-      sunset: "venice_sunset_1k.hdr",
-      warehouse: "empty_warehouse_01_1k.hdr",
-    };
 
     // Calculate quaternions for world transformation.
     const Rquat_threeworld_world = new THREE.Quaternion(
@@ -708,8 +772,8 @@ function DefaultLights() {
     );
 
     return (
-      <Environment
-        files={`hdri/${presetsObj[environmentMap.hdri]}`}
+      <HDRJPGEnvironment
+        files={hdriPresets[environmentMap.hdri]}
         background={environmentMap.background}
         backgroundBlurriness={environmentMap.background_blurriness}
         backgroundIntensity={environmentMap.background_intensity}
@@ -743,6 +807,36 @@ function DefaultLights() {
 }
 
 /**
+ * SceneFog component - applies THREE.Fog to the scene based on fog state.
+ */
+function SceneFog() {
+  const viewer = React.useContext(ViewerContext)!;
+  const fog = viewer.useEnvironment((state) => state.fog);
+  const scene = useThree((state) => state.scene);
+
+  React.useEffect(() => {
+    if (fog.enabled) {
+      scene.fog = new THREE.Fog(
+        new THREE.Color(
+          fog.color[0] / 255,
+          fog.color[1] / 255,
+          fog.color[2] / 255,
+        ),
+        fog.near,
+        fog.far,
+      );
+    } else {
+      scene.fog = null;
+    }
+    return () => {
+      scene.fog = null;
+    };
+  }, [fog, scene]);
+
+  return null;
+}
+
+/**
  * Adaptive DPR component for performance optimization.
  */
 function AdaptiveDpr() {
@@ -753,14 +847,14 @@ function AdaptiveDpr() {
   return fixedDpr !== null ? null : (
     <PerformanceMonitor
       factor={1.0}
-      step={0.2}
+      step={0.5}
       bounds={(refreshrate) => {
         const max = Math.min(refreshrate * 0.75, 85);
-        const min = Math.max(max * 0.5, 38);
+        const min = Math.max(max * 0.3, 38);
         return [min, max];
       }}
       onChange={({ factor, fps, refreshrate }) => {
-        const dpr = window.devicePixelRatio * (0.2 + 0.8 * factor);
+        const dpr = window.devicePixelRatio * (0.5 + 0.5 * factor);
         console.log(
           `[Performance] Setting DPR to ${dpr}; FPS=${fps}/${refreshrate}`,
         );
@@ -812,14 +906,20 @@ function BackgroundImage() {
   const shaders = useMemo(
     () => ({
       vert: `
+    #include <logdepthbuf_pars_vertex>
+    #ifdef USE_LOGDEPTHBUF
+    bool isPerspectiveMatrix( mat4 m ) { return m[ 2 ][ 3 ] == -1.0; }
+    #endif
     varying vec2 vUv;
     void main() {
       vUv = uv;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      #include <logdepthbuf_vertex>
     }
     `,
       frag: `
     #include <packing>
+    #include <logdepthbuf_pars_fragment>
     precision highp float;
     precision highp int;
 
@@ -848,7 +948,11 @@ function BackgroundImage() {
       float bufDepth;
       if(hasDepth){
         float depth = readDepth(depthMap, vUv);
-        bufDepth = viewZToPerspectiveDepth(-depth, cameraNear, cameraFar);
+        #ifdef USE_LOGDEPTHBUF
+          bufDepth = log2(1.0 + depth) * logDepthBufFC * 0.5;
+        #else
+          bufDepth = viewZToPerspectiveDepth(-depth, cameraNear, cameraFar);
+        #endif
       } else {
         bufDepth = 1.0;
       }
@@ -918,11 +1022,25 @@ function BackgroundImage() {
  * Helper component to sync scene and camera state.
  */
 function SceneContextSetter() {
-  const { mutable } = React.useContext(ViewerContext)!;
+  const viewer = React.useContext(ViewerContext)!;
+  const { mutable } = viewer;
   mutable.current.scene = useThree((state) => state.scene);
   mutable.current.camera = useThree(
     (state) => state.camera as THREE.PerspectiveCamera,
   );
+
+  // Expose scene internals on window for E2E testing (Playwright).
+  useEffect(() => {
+    const w = window as any;
+    w.__viserMutable = mutable.current;
+    w.__viserSceneTree = viewer.useSceneTree;
+
+    return () => {
+      delete w.__viserMutable;
+      delete w.__viserSceneTree;
+    };
+  }, [mutable, viewer.useSceneTree]);
+
   return null;
 }
 
@@ -947,7 +1065,7 @@ function ViserLogo() {
           onClick={openAbout}
           title="About Viser"
         >
-          <Image src="./logo.svg" style={{ width: "2.5em", height: "auto" }} />
+          <Image src={logoSvg} style={{ width: "2.5em", height: "auto" }} />
         </Box>
       </Tooltip>
       <Modal
@@ -971,7 +1089,7 @@ function ViserLogo() {
           </Anchor>
           &nbsp;&nbsp;&bull;&nbsp;&nbsp;
           <Anchor
-            href="https://github.com/nerfstudio-project/viser"
+            href="https://github.com/viser-project/viser"
             target="_blank"
             style={{ fontWeight: "600" }}
           >
@@ -982,8 +1100,6 @@ function ViserLogo() {
         <Box
           style={{
             textAlign: "left",
-            maxHeight: "120px",
-            overflowY: "auto",
             lineHeight: "1",
             fontSize: "0.8rem",
             opacity: "0.75",
@@ -998,7 +1114,11 @@ function ViserLogo() {
                 <Anchor
                   href={contributor.html_url}
                   target="_blank"
-                  style={{ textDecoration: "none", fontSize: "0.75rem" }}
+                  style={{
+                    textDecoration: "none",
+                    fontSize: "0.75rem",
+                    lineHeight: "1.2",
+                  }}
                 >
                   {contributor.login}
                 </Anchor>

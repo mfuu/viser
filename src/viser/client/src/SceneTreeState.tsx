@@ -32,6 +32,7 @@ export const rootNodeTemplate: SceneNode = {
       axes_radius: 0.0125,
       origin_radius: 0.025,
       origin_color: [236, 236, 0],
+      scale: 1.0,
     },
   },
   children: ["/WorldAxes"],
@@ -46,6 +47,7 @@ export const rootNodeTemplate: SceneNode = {
     );
     return [quat.w, quat.x, quat.y, quat.z] as [number, number, number, number];
   })(),
+  position: [0.0, 0.0, 0.0],
 };
 const worldAxesNodeTemplate: SceneNode = {
   message: {
@@ -57,6 +59,7 @@ const worldAxesNodeTemplate: SceneNode = {
       axes_radius: 0.0125,
       origin_radius: 0.025,
       origin_color: [236, 236, 0],
+      scale: 1.0,
     },
   },
   children: [],

@@ -116,12 +116,25 @@ class SceneNodeHandle(AssignablePropsBase[_SceneNodeHandleState]):
     ) -> TSceneNodeHandle:
         """Create scene node: send state to client(s) and set up
         server-side state."""
+        # Normalize name to always start with "/".
+        if not name.startswith("/"):
+            name = "/" + name
+            message.name = name
+
+        # Ensure all ancestor nodes exist (creates intermediate frames as needed).
+        api._ensure_ancestors_exist(name)
+
         # Send message.
         assert isinstance(message, _messages.Message)
         api._websock_interface.queue_message(message)
 
         out = cls(_SceneNodeHandleState(name, copy.deepcopy(message.props), api))
         api._handle_from_node_name[name] = out
+
+        # Track parent -> child relationship.
+        parent = name.rsplit("/", 1)[0]
+        api._children_from_node_name.setdefault(parent, set()).add(name)
+        api._children_from_node_name.setdefault(name, set())
 
         out.wxyz = wxyz
         out.position = position
@@ -133,7 +146,7 @@ class SceneNodeHandle(AssignablePropsBase[_SceneNodeHandleState]):
         return out
 
     @property
-    def wxyz(self) -> npt.NDArray[np.float32]:
+    def wxyz(self) -> npt.NDArray[np.float64]:
         """Orientation of the scene node. This is the quaternion representation of the R
         in `p_parent = [R | t] p_local`. Synchronized to clients automatically when assigned.
         """
@@ -153,7 +166,7 @@ class SceneNodeHandle(AssignablePropsBase[_SceneNodeHandleState]):
         )
 
     @property
-    def position(self) -> npt.NDArray[np.float32]:
+    def position(self) -> npt.NDArray[np.float64]:
         """Position of the scene node. This is equivalent to the t in
         `p_parent = [R | t] p_local`. Synchronized to clients automatically when assigned.
         """
@@ -193,8 +206,28 @@ class SceneNodeHandle(AssignablePropsBase[_SceneNodeHandleState]):
             warnings.warn(f"Attempted to remove already removed node: {self.name}")
             return
 
-        self._impl.removed = True
-        self._impl.api._handle_from_node_name.pop(self._impl.name)
+        # Collect all descendants via BFS.
+        to_remove = [self._impl.name]
+        i = 0
+        while i < len(to_remove):
+            children = self._impl.api._children_from_node_name.get(to_remove[i], ())
+            to_remove.extend(children)
+            i += 1
+
+        # Clean up all descendants from both dicts.
+        for node_name in to_remove:
+            handle = self._impl.api._handle_from_node_name.pop(node_name, None)
+            if handle is not None:
+                handle._impl.removed = True
+            self._impl.api._children_from_node_name.pop(node_name, None)
+
+        # Remove from parent's children set.
+        parent = self._impl.name.rsplit("/", 1)[0]
+        parent_children = self._impl.api._children_from_node_name.get(parent)
+        if parent_children is not None:
+            parent_children.discard(self._impl.name)
+
+        # Single message — client cascades removal to children.
         self._impl.api._websock_interface.queue_message(
             _messages.RemoveSceneNodeMessage(self._impl.name)
         )
@@ -371,10 +404,11 @@ class CameraFrustumHandle(
             frustum.scale = 1.0 / frustum.compute_canonical_frustum_size()[2]
 
 
-        `.scale` is a unitless value that scales the X/Y/Z dimensions linearly.
-        It aims to preserve the visual volume of the frustum regardless of the
-        aspect ratio or FOV. This method allows more precise computation and
-        control of the frustum's dimensions.
+        `.scale` can be a float for uniform scaling or a 3-tuple for per-axis
+        scaling of the X, Y, and Z dimensions. It aims to preserve the visual
+        volume of the frustum regardless of the aspect ratio or FOV. This
+        method allows more precise computation and control of the frustum's
+        dimensions.
         """
         # Math used in the client implementation.
         y = np.tan(self.fov / 2.0)
@@ -485,6 +519,13 @@ class IcosphereHandle(
     _messages.IcosphereProps,
 ):
     """Handle for icosphere objects."""
+
+
+class CylinderHandle(
+    _ClickableSceneNodeHandle,
+    _messages.CylinderProps,
+):
+    """Handle for cylinder objects."""
 
 
 class BatchedMeshHandle(
@@ -654,7 +695,7 @@ class MeshSkinnedBoneHandle:
     _impl: BoneState
 
     @property
-    def wxyz(self) -> npt.NDArray[np.float32]:
+    def wxyz(self) -> npt.NDArray[np.float64]:
         """Orientation of the bone. This is the quaternion representation of the R
         in `p_parent = [R | t] p_local`. Synchronized to clients automatically when assigned.
         """
@@ -676,7 +717,7 @@ class MeshSkinnedBoneHandle:
         )
 
     @property
-    def position(self) -> npt.NDArray[np.float32]:
+    def position(self) -> npt.NDArray[np.float64]:
         """Position of the bone. This is equivalent to the t in
         `p_parent = [R | t] p_local`. Synchronized to clients automatically when assigned.
         """

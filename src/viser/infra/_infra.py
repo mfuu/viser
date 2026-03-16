@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import atexit
+import base64
 import contextlib
 import dataclasses
 import gzip
@@ -12,15 +13,17 @@ import mimetypes
 import queue
 import threading
 import time
+import webbrowser
 from asyncio.events import AbstractEventLoop
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any, Callable, Generator, NewType, TypeVar
 
-import msgspec
+import msgspec.msgpack
 import websockets.asyncio.server
 import websockets.datastructures
 import websockets.exceptions
+import zstandard
 from typing_extensions import Literal, assert_never, override
 from websockets import Headers
 from websockets.asyncio.server import ServerConnection
@@ -69,9 +72,7 @@ class StateSerializer:
     def insert_sleep(self, duration: float) -> None:
         """Insert a sleep into the recorded file. This can be useful for
         dynamic 3D data."""
-        assert self._handler._record_handle is not None, (
-            "serialize() was already called!"
-        )
+        assert self in self._handler._record_handles, "serialize() was already called!"
         self._time += duration
 
     def serialize(self) -> bytes:
@@ -82,9 +83,7 @@ class StateSerializer:
         Returns:
             The recording as bytes.
         """
-        assert self._handler._record_handle is not None, (
-            "serialize() was already called!"
-        )
+        assert self in self._handler._record_handles, "serialize() was already called!"
 
         packed_bytes = msgspec.msgpack.encode(
             {
@@ -94,8 +93,78 @@ class StateSerializer:
             }
         )
         assert isinstance(packed_bytes, bytes)
-        self._handler._record_handle = None
-        return gzip.compress(packed_bytes, compresslevel=9)
+        self._handler._record_handles.remove(self)
+        # Use zstd for better compression ratio and speed.
+        # Prepend 8-byte size header for decompressor.
+        compressed = zstandard.ZstdCompressor(level=12).compress(packed_bytes)
+        return len(packed_bytes).to_bytes(8, "little") + compressed
+
+    def show(self, height: int = 400, dark_mode: bool = False) -> None:
+        """Display the serialized scene in a Jupyter notebook or web browser.
+
+        In Jupyter notebooks/labs, displays an inline IFrame. When running as a
+        script, opens the visualization in the default web browser.
+
+        See also :meth:`viser.ViserServer.show`.
+
+        Args:
+            height: Height of the embedded viewer in pixels.
+            dark_mode: Use dark color scheme.
+        """
+        import html as html_module
+
+        scene_bytes = self.serialize()
+        scene_b64 = base64.b64encode(scene_bytes).decode("ascii")
+
+        # Get client HTML and inject scene data as global variables.
+        # The client reads from window.__VISER_EMBED_DATA__ (App.tsx).
+        client_html_path = (
+            Path(__file__).parent.parent / "client" / "build" / "index.html"
+        )
+        client_html = client_html_path.read_text()
+        dark_mode_str = "true" if dark_mode else "false"
+        inject_script = (
+            f"<script>"
+            f'window.__VISER_EMBED_DATA__="{scene_b64}";'
+            f"window.__VISER_EMBED_CONFIG__={{darkMode:{dark_mode_str}}};"
+            f"</script>"
+        )
+        modified_html = client_html.replace("</head>", f"{inject_script}</head>")
+
+        # Display in IPython (Jupyter, Colab, myst-nb, etc.) using srcdoc.
+        # This embeds the entire HTML inline, avoiding file serving issues.
+        try:
+            from IPython.core.getipython import get_ipython  # type: ignore
+
+            ipython = get_ipython()
+            if ipython is not None:
+                from IPython.display import HTML, display  # type: ignore
+
+                # Escape HTML for srcdoc attribute.
+                escaped_html = html_module.escape(modified_html, quote=True)
+
+                # Wrap in div to avoid IPython's "Consider using IFrame" warning.
+                display(
+                    HTML(
+                        f'<div style="border:1px solid #ddd">'
+                        f'<iframe srcdoc="{escaped_html}" '
+                        f'width="100%" height="{height}" '
+                        f'style="border:none;display:block"></iframe>'
+                        f"</div>"
+                    )
+                )
+                return
+        except ImportError:
+            pass
+
+        # Fallback for scripts: write the modified HTML to a temp file.
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".html", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(modified_html)
+            webbrowser.open("file://" + f.name)
 
 
 class WebsockMessageHandler:
@@ -108,17 +177,17 @@ class WebsockMessageHandler:
         self._queued_messages: queue.Queue = queue.Queue()
         self._locked_thread_id = -1
 
-        # Set to None if not recording.
-        self._record_handle: StateSerializer | None = None
+        # List of active serializers recording messages.
+        self._record_handles: list[StateSerializer] = []
 
     def get_message_serializer(
         self, filter: Callable[[Message], bool]
     ) -> StateSerializer:
         """Start recording messages that are sent. Sent messages will be
         serialized and can be used for playback."""
-        assert self._record_handle is None, "Already recording."
-        self._record_handle = StateSerializer(self, filter)
-        return self._record_handle
+        serializer = StateSerializer(self, filter)
+        self._record_handles.append(serializer)
+        return serializer
 
     def register_handler(
         self,
@@ -160,8 +229,8 @@ class WebsockMessageHandler:
 
     def queue_message(self, message: Message) -> None:
         """Wrapped method for sending messages."""
-        if self._record_handle is not None:
-            self._record_handle._insert_message(message)
+        for handle in self._record_handles:
+            handle._insert_message(message)
 
         self.get_message_buffer().push(message)
 
@@ -273,7 +342,7 @@ class WebsockServer(WebsockMessageHandler):
         # Exit the server thread when the main process exits. This would happen
         # automatically, but is nice to do explicitly to avoid some nanobind
         # reference leak warnings:
-        # https://github.com/nerfstudio-project/viser/issues/518
+        # https://github.com/viser-project/viser/issues/518
         atexit.register(self.stop)
 
         # Broadcast buffer should be populated by the background worker.
@@ -289,7 +358,11 @@ class WebsockServer(WebsockMessageHandler):
         atexit.unregister(self.stop)
 
         # Signal the background thread to stop.
-        self._background_event_loop.call_soon_threadsafe(self._stop_event.set)
+        try:
+            self._background_event_loop.call_soon_threadsafe(self._stop_event.set)
+        except RuntimeError:
+            # Event loop may already be closed during teardown.
+            pass
 
         # Clean up the message buffers. This isn't really necessary, but helps
         # avoid "task destroyed" errors.
@@ -511,7 +584,7 @@ class WebsockServer(WebsockMessageHandler):
             # problems for Javascript on some Windows machines.
             #
             # Some references:
-            #     https://github.com/nerfstudio-project/viser/issues/256#issuecomment-2369684252
+            #     https://github.com/viser-project/viser/issues/256#issuecomment-2369684252
             #     https://bugs.python.org/issue43975
             #     https://github.com/golang/go/issues/32350#issuecomment-525111557
             #
@@ -568,6 +641,9 @@ class WebsockServer(WebsockMessageHandler):
                         ws_handler,
                         host,
                         port_attempt,
+                        # Increase ws message size limit to 50MB to allow large messages.
+                        # (e.g. via client.get_render()).
+                        max_size=50 * 1024 * 1024,
                         # Compression can be too slow for our use cases.
                         compression=None,
                         process_request=(
@@ -575,15 +651,13 @@ class WebsockServer(WebsockMessageHandler):
                         ),
                         # Accept connections with version-based protocol and extract version in handler.
                         subprotocols=None,
-                        select_subprotocol=lambda _, subprotocols: (
-                            next(
-                                (
-                                    Subprotocol(p)
-                                    for p in subprotocols
-                                    if p.startswith("viser-v")
-                                ),
-                                None,
-                            )
+                        select_subprotocol=lambda _, subprotocols: next(
+                            (
+                                Subprotocol(p)
+                                for p in subprotocols
+                                if p.startswith("viser-v")
+                            ),
+                            None,
                         ),
                     ) as serve_future:
                         assert serve_future.server is not None
@@ -612,6 +686,7 @@ async def _message_producer(
 ) -> None:
     """Infinite loop to broadcast windows of messages from a buffer."""
     window_generator = buffer.window_generator(client_id)
+    zstd = zstandard.ZstdCompressor(level=1)
     while not buffer.done:
         try:
             outgoing = await window_generator.__anext__()
@@ -619,7 +694,8 @@ async def _message_producer(
             break
 
         if client_api_version == 1:
-            serialized = msgspec.msgpack.encode(
+            # Encode the message structure.
+            inner = msgspec.msgpack.encode(
                 {
                     "messages": tuple(
                         message.as_serializable_dict() for message in outgoing
@@ -627,7 +703,9 @@ async def _message_producer(
                     "timestampSec": time.perf_counter(),
                 }
             )
-            assert isinstance(serialized, bytes)
+            # Compress and prepend size header (8 bytes, little-endian uint64).
+            compressed = zstd.compress(inner)
+            serialized = len(inner).to_bytes(8, "little") + compressed
             await websocket.send(serialized)
         elif client_api_version == 0:
             for msg in outgoing:

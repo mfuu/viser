@@ -1,6 +1,6 @@
 // Automatically generated file - do not edit manually.
 // This is synchronized with the Python package version in viser/__init__.py.
-export const VISER_VERSION = "1.0.20";
+export const VISER_VERSION = "1.0.24";
 
 // GitHub contributors for the viser project.
 export interface Contributor {
@@ -62,12 +62,20 @@ export const GITHUB_CONTRIBUTORS: Contributor[] = [
     html_url: "https://github.com/zerolover",
   },
   {
+    login: "henrynoyes",
+    html_url: "https://github.com/henrynoyes",
+  },
+  {
     login: "beckyfeng08",
     html_url: "https://github.com/beckyfeng08",
   },
   {
     login: "vye16",
     html_url: "https://github.com/vye16",
+  },
+  {
+    login: "david-dorf",
+    html_url: "https://github.com/david-dorf",
   },
   {
     login: "AdamRashid96",
@@ -106,8 +114,16 @@ export const GITHUB_CONTRIBUTORS: Contributor[] = [
     html_url: "https://github.com/MosesEbere",
   },
   {
+    login: "Mitia-RH",
+    html_url: "https://github.com/Mitia-RH",
+  },
+  {
     login: "nlml",
     html_url: "https://github.com/nlml",
+  },
+  {
+    login: "kevinzakka",
+    html_url: "https://github.com/kevinzakka",
   },
   {
     login: "kdexd",
@@ -118,6 +134,10 @@ export const GITHUB_CONTRIBUTORS: Contributor[] = [
     html_url: "https://github.com/ojh6404",
   },
   {
+    login: "heiwang1997",
+    html_url: "https://github.com/heiwang1997",
+  },
+  {
     login: "hongsukchoi",
     html_url: "https://github.com/hongsukchoi",
   },
@@ -126,16 +146,16 @@ export const GITHUB_CONTRIBUTORS: Contributor[] = [
     html_url: "https://github.com/mcallisterdavid",
   },
   {
-    login: "david-dorf",
-    html_url: "https://github.com/david-dorf",
-  },
-  {
     login: "cvachha",
     html_url: "https://github.com/cvachha",
   },
   {
     login: "ArthurAllshire",
     html_url: "https://github.com/ArthurAllshire",
+  },
+  {
+    login: "lukehugh",
+    html_url: "https://github.com/lukehugh",
   },
   {
     login: "escontra",

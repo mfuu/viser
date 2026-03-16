@@ -168,7 +168,7 @@ function ConnectionStatus() {
   return (
     <>
       <div style={{ width: "1.1em" }} /> {/* Spacer. */}
-      <Transition transition="skew-down" mounted={websocketState === "connected"}>
+      <Transition transition="fade" mounted={websocketState === "connected"}>
         {(styles) => (
           <IconCloudCheck
             color={"#0b0"}
@@ -181,7 +181,10 @@ function ConnectionStatus() {
           />
         )}
       </Transition>
-      <Transition transition="skew-down" mounted={websocketState === "reconnecting"}>
+      <Transition
+        transition="skew-down"
+        mounted={websocketState === "reconnecting"}
+      >
         {(styles) => (
           <Loader
             size="xs"
@@ -191,7 +194,10 @@ function ConnectionStatus() {
           />
         )}
       </Transition>
-      <Transition transition="skew-down" mounted={websocketState === "inactive"}>
+      <Transition
+        transition="skew-down"
+        mounted={websocketState === "inactive"}
+      >
         {(styles) => (
           <IconPlayerPause
             color={"var(--mantine-color-red-filled)"}
@@ -375,7 +381,7 @@ function ShareButton() {
         )}
         <Text size="xs">
           Share links are experimental and bandwidth-limited. Problems? Consider{" "}
-          <Anchor href="https://github.com/nerfstudio-project/viser/issues">
+          <Anchor href="https://github.com/viser-project/viser/issues">
             reporting on GitHub
           </Anchor>
           .

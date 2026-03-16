@@ -9,6 +9,16 @@ client_dir = Path(__file__).absolute().parent / "client"
 build_dir = client_dir / "build"
 
 
+def _is_editable_install() -> bool:
+    """Check if viser is installed in editable mode.
+
+    In editable installs, __file__ is in src/viser/ within the source tree.
+    In regular installs, __file__ is in site-packages/viser/.
+    """
+    viser_dir = Path(__file__).parent
+    return viser_dir.name == "viser" and viser_dir.parent.name == "src"
+
+
 def _check_viser_dev_running() -> bool:
     """Returns True if the viewer client has been launched via `npm run dev`."""
     try:
@@ -42,6 +52,11 @@ def _check_viser_dev_running() -> bool:
 
 def ensure_client_is_built() -> None:
     """Ensure that the client is built or already running."""
+
+    # For non-editable installs, just verify the build exists.
+    # Skip timestamp checks and dev server detection.
+    if not _is_editable_install() and (build_dir / "index.html").exists():
+        return
 
     if not (client_dir / "src").exists():
         # Can't build client.
@@ -115,6 +130,11 @@ def _build_viser_client(out_dir: Path, cached: bool = True) -> None:
         + subprocess_env["PATH"]
     )
     npm_path = node_bin_dir / "npm"
+
+    if sys.platform == "win32":
+        npx_path = npx_path.with_suffix(".cmd")
+        npm_path = npm_path.with_suffix(".cmd")
+
     subprocess.run(
         args=[str(npm_path), "install"],
         env=subprocess_env,
@@ -175,7 +195,7 @@ def _install_sandboxed_node() -> Path:
 
     env_dir = client_dir / ".nodeenv"
     result = subprocess.run(
-        [sys.executable, "-m", "nodeenv", "--node=20.4.0", env_dir], check=False
+        [sys.executable, "-m", "nodeenv", "--node=24.12.0", env_dir], check=False
     )
 
     if result.returncode != 0:

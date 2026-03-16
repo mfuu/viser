@@ -5,6 +5,7 @@ import { useGlbLoader } from "./GlbLoaderUtils";
 import { useFrame, useThree } from "@react-three/fiber";
 import { HoverableContext } from "../HoverContext";
 import { OutlinesMaterial } from "../Outlines";
+import { normalizeScale } from "../utils/normalizeScale";
 
 /**
  * Component for rendering a single GLB model
@@ -48,6 +49,7 @@ export const SingleGlbAsset = React.forwardRef<
   const outlineMaterial = React.useMemo(() => {
     const material = new OutlinesMaterial({
       side: THREE.BackSide,
+      fog: true,
     });
     material.thickness = 10;
     material.color = new THREE.Color(0xfbff00); // Yellow highlight color
@@ -81,13 +83,24 @@ export const SingleGlbAsset = React.forwardRef<
       depthWrite: false,
     });
   }, [shadowOpacity]);
+
+  // Clean up shadow material when it changes.
+  React.useEffect(() => {
+    return () => {
+      if (shadowMaterial) shadowMaterial.dispose();
+    };
+  }, [shadowMaterial]);
+
   if (!gltf) return null;
 
   return (
     <group ref={ref}>
-      <primitive object={gltf.scene} scale={message.props.scale} />
+      <primitive
+        object={gltf.scene}
+        scale={normalizeScale(message.props.scale)}
+      />
       {shadowMaterial && shadowOpacity > 0 ? (
-        <group scale={message.props.scale}>
+        <group scale={normalizeScale(message.props.scale)}>
           {meshes.map((mesh, i) => (
             <mesh
               key={`shadow-${i}`}

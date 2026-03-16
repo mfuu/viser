@@ -2,10 +2,13 @@ import * as THREE from "three";
 // @ts-ignore - troika-three-text doesn't have type definitions
 import { BatchedText } from "troika-three-text";
 
+// Import font as asset for proper bundling.
+import interFont from "./assets/Inter-VariableFont_slnt,wght.ttf";
+
 /**
  * Shared configuration for label text styling.
  */
-export const LABEL_FONT = "./Inter-VariableFont_slnt,wght.ttf";
+export const LABEL_FONT = interFont;
 export const LABEL_TEXT_COLOR = 0x000000; // Black
 export const LABEL_SDF_GLYPH_SIZE = 32;
 
@@ -77,13 +80,21 @@ export function calculateBaseFontSize(
 }
 
 /**
+ * Reference viewport height for screen-space label sizing.
+ * Labels maintain consistent pixel size by scaling relative to this reference.
+ */
+const REFERENCE_VIEWPORT_HEIGHT = 800;
+
+/**
  * Calculate screen-space scale factor for labels.
  * Returns scale factor to apply to base font size.
+ * Accounts for camera distance, FOV, and viewport size to maintain constant pixel size.
  */
 export function calculateScreenSpaceScale(
   camera: THREE.Camera,
   worldPosition: THREE.Vector3,
   tempCameraSpacePos: THREE.Vector3,
+  viewportHeight: number,
 ): number {
   if ("fov" in camera && typeof camera.fov === "number") {
     // PerspectiveCamera: use Z-coordinate in camera space (not Euclidean distance).
@@ -96,9 +107,12 @@ export function calculateScreenSpaceScale(
       ((camera as THREE.PerspectiveCamera).fov * Math.PI) / 360,
     );
     // Reference depth is 10 units (baseFontSize is calibrated for this).
-    return (depth / 10.0) * fovScale;
+    // Scale by reference/actual viewport height to maintain constant pixel size.
+    return (
+      (depth / 10.0) * fovScale * (REFERENCE_VIEWPORT_HEIGHT / viewportHeight)
+    );
   } else {
-    // OrthographicCamera: use constant scale (no perspective).
-    return 1.0;
+    // OrthographicCamera: scale based on viewport height only.
+    return REFERENCE_VIEWPORT_HEIGHT / viewportHeight;
   }
 }

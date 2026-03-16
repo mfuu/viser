@@ -29,6 +29,116 @@ from ._tunnel import ViserTunnel
 from .infra._infra import StateSerializer
 
 
+class InitialCameraConfig:
+    """Configuration for the initial camera pose.
+
+    Accessed via :attr:`ViserServer.initial_camera`. Values set here determine:
+
+    1. The starting camera pose for new client connections
+    2. The pose that "Reset View" returns to in the client
+
+    Default behavior (when properties are not explicitly set):
+        The client uses a built-in default camera position that provides a
+        reasonable view regardless of the scene's up direction. This default
+        is specified in three.js coordinates and does not require world
+        coordinate transformation.
+
+    When properties are explicitly set, they are interpreted as viser world
+    coordinates and transformed appropriately based on the scene's up direction.
+
+    When properties are changed after clients are connected, only the "Reset
+    View" target is updated. Clients' current camera positions are not moved,
+    allowing users to continue working undisturbed.
+
+    Note that URL parameters (e.g., ``?initialCameraPosition=1,2,3``) take
+    priority over server-set values.
+
+    The API is designed to match :class:`CameraHandle`, which is used for
+    per-client camera control.
+    """
+
+    def __init__(self, broadcast: Callable[[_messages.Message], None]) -> None:
+        self._broadcast = broadcast
+        self._position: npt.NDArray[np.float64] = np.array([3.0, 3.0, 3.0])
+        self._look_at: npt.NDArray[np.float64] = np.array([0.0, 0.0, 0.0])
+        # None means "same as the scene up direction".
+        self._up: npt.NDArray[np.float64] | None = None
+        # 75 degrees in radians; matches three.js PerspectiveCamera default.
+        self._fov: float = 75.0 * np.pi / 180.0
+        self._near: float = 0.01
+        self._far: float = 1000.0
+
+    @property
+    def position(self) -> npt.NDArray[np.float64]:
+        """Camera position in world coordinates."""
+        return self._position
+
+    @position.setter
+    def position(
+        self, value: tuple[float, float, float] | npt.NDArray[np.floating]
+    ) -> None:
+        self._position = np.asarray(value, dtype=np.float64)
+        self._broadcast(
+            _messages.SetCameraPositionMessage(cast_vector(value, 3), initial=True)
+        )
+
+    @property
+    def look_at(self) -> npt.NDArray[np.float64]:
+        """Point the camera looks at in world coordinates."""
+        return self._look_at
+
+    @look_at.setter
+    def look_at(
+        self, value: tuple[float, float, float] | npt.NDArray[np.floating]
+    ) -> None:
+        self._look_at = np.asarray(value, dtype=np.float64)
+        self._broadcast(
+            _messages.SetCameraLookAtMessage(cast_vector(value, 3), initial=True)
+        )
+
+    @property
+    def up(self) -> npt.NDArray[np.float64] | None:
+        """Camera up direction, or None for scene up direction."""
+        return self._up
+
+    @up.setter
+    def up(self, value: tuple[float, float, float] | npt.NDArray[np.floating]) -> None:
+        self._up = np.asarray(value, dtype=np.float64)
+        self._broadcast(
+            _messages.SetCameraUpDirectionMessage(cast_vector(value, 3), initial=True)
+        )
+
+    @property
+    def fov(self) -> float:
+        """Vertical field of view in radians."""
+        return self._fov
+
+    @fov.setter
+    def fov(self, value: float) -> None:
+        self._fov = float(value)
+        self._broadcast(_messages.SetCameraFovMessage(self._fov, initial=True))
+
+    @property
+    def near(self) -> float:
+        """Near clipping plane distance."""
+        return self._near
+
+    @near.setter
+    def near(self, value: float) -> None:
+        self._near = float(value)
+        self._broadcast(_messages.SetCameraNearMessage(self._near, initial=True))
+
+    @property
+    def far(self) -> float:
+        """Far clipping plane distance."""
+        return self._far
+
+    @far.setter
+    def far(self, value: float) -> None:
+        self._far = float(value)
+        self._broadcast(_messages.SetCameraFarMessage(self._far, initial=True))
+
+
 @dataclasses.dataclass
 class _CameraHandleState:
     """Information about a client's camera state."""
@@ -641,6 +751,7 @@ class ViserServer(DeprecatedAttributeShim if not TYPE_CHECKING else object):
 
         _client_autobuild.ensure_client_is_built()
 
+        self._initial_camera = InitialCameraConfig(broadcast=server.queue_message)
         self._connection = server
         self._connected_clients: dict[int, ClientHandle] = {}
         self._client_lock = threading.Lock()
@@ -811,6 +922,21 @@ class ViserServer(DeprecatedAttributeShim if not TYPE_CHECKING else object):
         self.scene.set_up_direction("+z")
         self.gui.reset()
         self.gui.set_panel_label(label)
+
+    @property
+    def initial_camera(self) -> InitialCameraConfig:
+        """Configuration for initial camera pose.
+
+        Set these values to control the initial camera position for new
+        clients and serialized/embedded scenes. The API is designed to match
+        :class:`viser.CameraHandle`, which is used for per-client camera control.
+
+        Example usage::
+
+            server.initial_camera.position = (5.0, 5.0, 3.0)
+            server.initial_camera.look_at = (0.0, 0.0, 0.0)
+        """
+        return self._initial_camera
 
     def _run_garbage_collector(self, force: bool = False) -> None:
         """Clean up old messages. This is not elegant; a refactor of our
@@ -1077,7 +1203,7 @@ class ViserServer(DeprecatedAttributeShim if not TYPE_CHECKING else object):
     def _start_scene_recording(self) -> Any:
         """**Old API.**"""
         warnings.warn(
-            "_start_scene_recording() has been renamed. See notes in https://github.com/nerfstudio-project/viser/pull/357 for the new API.",
+            "_start_scene_recording() has been renamed. See notes in https://github.com/viser-project/viser/pull/357 for the new API.",
             stacklevel=2,
         )
 
@@ -1087,20 +1213,20 @@ class ViserServer(DeprecatedAttributeShim if not TYPE_CHECKING else object):
         class _SceneRecordCompatibilityShim:
             def set_loop_start(self):
                 warnings.warn(
-                    "_start_scene_recording() has been renamed. See notes in https://github.com/nerfstudio-project/viser/pull/357 for the new API.",
+                    "_start_scene_recording() has been renamed. See notes in https://github.com/viser-project/viser/pull/357 for the new API.",
                     stacklevel=2,
                 )
 
             def insert_sleep(self, duration: float):
                 warnings.warn(
-                    "_start_scene_recording() has been renamed. See notes in https://github.com/nerfstudio-project/viser/pull/357 for the new API.",
+                    "_start_scene_recording() has been renamed. See notes in https://github.com/viser-project/viser/pull/357 for the new API.",
                     stacklevel=2,
                 )
                 serializer.insert_sleep(duration)
 
             def end_and_serialize(self) -> bytes:
                 warnings.warn(
-                    "_start_scene_recording() has been renamed. See notes in https://github.com/nerfstudio-project/viser/pull/357 for the new API.",
+                    "_start_scene_recording() has been renamed. See notes in https://github.com/viser-project/viser/pull/357 for the new API.",
                     stacklevel=2,
                 )
                 return serializer.serialize()

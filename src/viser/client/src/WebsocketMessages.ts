@@ -12,7 +12,6 @@ export interface CameraFrustumMessage {
   props: {
     fov: number;
     aspect: number;
-    scale: number;
     line_width: number;
     color: [number, number, number];
     _format: "jpeg" | "png";
@@ -20,6 +19,7 @@ export interface CameraFrustumMessage {
     cast_shadow: boolean;
     receive_shadow: boolean | number;
     variant: "wireframe" | "filled";
+    scale: number | [number, number, number];
   };
 }
 /** GlTF message.
@@ -31,9 +31,9 @@ export interface GlbMessage {
   name: string;
   props: {
     glb_data: Uint8Array<ArrayBuffer>;
-    scale: number | [number, number, number];
     cast_shadow: boolean;
     receive_shadow: boolean | number;
+    scale: number | [number, number, number];
   };
 }
 /** Coordinate frame message.
@@ -49,6 +49,7 @@ export interface FrameMessage {
     axes_radius: number;
     origin_radius: number;
     origin_color: [number, number, number];
+    scale: number | [number, number, number];
   };
 }
 /** Batched axes message.
@@ -67,6 +68,7 @@ export interface BatchedAxesMessage {
     batched_scales: Uint8Array<ArrayBuffer> | null;
     axes_length: number;
     axes_radius: number;
+    scale: number | [number, number, number];
   };
 }
 /** Grid message. Helpful for visualizing things like ground planes.
@@ -91,6 +93,9 @@ export interface GridMessage {
     fade_strength: number;
     fade_from: "camera" | "origin";
     shadow_opacity: number;
+    plane_color: [number, number, number];
+    plane_opacity: number;
+    scale: number | [number, number, number];
   };
 }
 /** Add a 2D label to the scene.
@@ -145,6 +150,7 @@ export interface PointCloudMessage {
     point_size: number;
     point_shape: "square" | "diamond" | "circle" | "rounded" | "sparkle";
     precision: "float16" | "float32";
+    scale: number | [number, number, number];
   };
 }
 /** Directional light message.
@@ -226,6 +232,7 @@ export interface SpotLightMessage {
     penumbra: number;
     decay: number;
     cast_shadow: boolean;
+    direction: [number, number, number];
   };
 }
 /** Mesh message.
@@ -268,6 +275,7 @@ export interface BoxMessage {
     material: "standard" | "toon3" | "toon5";
     cast_shadow: boolean;
     receive_shadow: boolean | number;
+    scale: number | [number, number, number];
   };
 }
 /** Icosphere message.
@@ -288,6 +296,29 @@ export interface IcosphereMessage {
     material: "standard" | "toon3" | "toon5";
     cast_shadow: boolean;
     receive_shadow: boolean | number;
+    scale: number | [number, number, number];
+  };
+}
+/** Cylinder message.
+ *
+ * (automatically generated)
+ */
+export interface CylinderMessage {
+  type: "CylinderMessage";
+  name: string;
+  props: {
+    radius: number;
+    height: number;
+    color: [number, number, number];
+    radial_segments: number;
+    wireframe: boolean;
+    opacity: number | null;
+    flat_shading: boolean;
+    side: "front" | "back" | "double";
+    material: "standard" | "toon3" | "toon5";
+    cast_shadow: boolean;
+    receive_shadow: boolean | number;
+    scale: number | [number, number, number];
   };
 }
 /** Skinned mesh message.
@@ -337,6 +368,8 @@ export interface BatchedMeshesMessage {
     material: "standard" | "toon3" | "toon5";
     cast_shadow: boolean;
     receive_shadow: boolean;
+    batched_opacities: Uint8Array<ArrayBuffer> | null;
+    scale: number | [number, number, number];
   };
 }
 /** Message from server->client carrying batched GLB information.
@@ -354,6 +387,7 @@ export interface BatchedGlbMessage {
     glb_data: Uint8Array<ArrayBuffer>;
     cast_shadow: boolean;
     receive_shadow: boolean;
+    scale: number | [number, number, number];
   };
 }
 /** Message for transform gizmos.
@@ -391,6 +425,7 @@ export interface ImageMessage {
     render_height: number;
     cast_shadow: boolean;
     receive_shadow: boolean | number;
+    scale: number | [number, number, number];
   };
 }
 /** Message from server->client carrying line segments information.
@@ -404,6 +439,7 @@ export interface LineSegmentsMessage {
     points: Uint8Array<ArrayBuffer>;
     line_width: number;
     colors: Uint8Array<ArrayBuffer>;
+    scale: number | [number, number, number];
   };
 }
 /** Message from server->client carrying Catmull-Rom spline information.
@@ -421,6 +457,7 @@ export interface CatmullRomSplineMessage {
     line_width: number;
     color: [number, number, number];
     segments: number | null;
+    scale: number | [number, number, number];
   };
 }
 /** Message from server->client carrying Cubic Bezier spline information.
@@ -436,6 +473,7 @@ export interface CubicBezierSplineMessage {
     line_width: number;
     color: [number, number, number];
     segments: number | null;
+    scale: number | [number, number, number];
   };
 }
 /** Message from server->client carrying splattable Gaussians.
@@ -445,7 +483,10 @@ export interface CubicBezierSplineMessage {
 export interface GaussianSplatsMessage {
   type: "GaussianSplatsMessage";
   name: string;
-  props: { buffer: Uint8Array<ArrayBuffer> };
+  props: {
+    buffer: Uint8Array<ArrayBuffer>;
+    scale: number | [number, number, number];
+  };
 }
 /** Remove a particular node from the scene.
  *
@@ -794,6 +835,7 @@ export interface GuiButtonMessage {
       | [number, number, number]
       | null;
     _icon_html: string | null;
+    _hold_callback_freqs: number[];
   };
 }
 /** GuiUploadButtonMessage(uuid: 'str', container_uuid: 'str', props: 'GuiUploadButtonProps')
@@ -1146,6 +1188,17 @@ export interface ScenePointerEnableMessage {
   event_type: "click" | "rect-select";
   keyboard: "ctrl" | "shift" | "alt" | "meta" | null;
 }
+/** Fog message.
+ *
+ * (automatically generated)
+ */
+export interface FogMessage {
+  type: "FogMessage";
+  near: number;
+  far: number;
+  color: [number, number, number];
+  enabled: boolean;
+}
 /** Environment Map message.
  *
  * (automatically generated)
@@ -1211,6 +1264,7 @@ export interface SetBonePositionMessage {
 export interface SetCameraPositionMessage {
   type: "SetCameraPositionMessage";
   position: [number, number, number];
+  initial: boolean;
 }
 /** Server -> client message to set the camera's up direction.
  *
@@ -1219,6 +1273,7 @@ export interface SetCameraPositionMessage {
 export interface SetCameraUpDirectionMessage {
   type: "SetCameraUpDirectionMessage";
   position: [number, number, number];
+  initial: boolean;
 }
 /** Server -> client message to set the camera's look-at point.
  *
@@ -1227,6 +1282,7 @@ export interface SetCameraUpDirectionMessage {
 export interface SetCameraLookAtMessage {
   type: "SetCameraLookAtMessage";
   look_at: [number, number, number];
+  initial: boolean;
 }
 /** Server -> client message to set the camera's near clipping plane.
  *
@@ -1235,6 +1291,7 @@ export interface SetCameraLookAtMessage {
 export interface SetCameraNearMessage {
   type: "SetCameraNearMessage";
   near: number;
+  initial: boolean;
 }
 /** Server -> client message to set the camera's far clipping plane.
  *
@@ -1243,6 +1300,7 @@ export interface SetCameraNearMessage {
 export interface SetCameraFarMessage {
   type: "SetCameraFarMessage";
   far: number;
+  initial: boolean;
 }
 /** Server -> client message to set the camera's field of view.
  *
@@ -1251,6 +1309,7 @@ export interface SetCameraFarMessage {
 export interface SetCameraFovMessage {
   type: "SetCameraFovMessage";
   fov: number;
+  initial: boolean;
 }
 /** Server -> client message to set a scene node's orientation.
  *
@@ -1366,6 +1425,17 @@ export interface GuiModalMessage {
 export interface GuiCloseModalMessage {
   type: "GuiCloseModalMessage";
   uuid: string;
+}
+/** Message sent from client->server when a button is being held.
+ *
+ * Sent periodically at the specified frequency while the button is pressed.
+ *
+ * (automatically generated)
+ */
+export interface GuiButtonHoldMessage {
+  type: "GuiButtonHoldMessage";
+  uuid: string;
+  frequency: number;
 }
 /** Sent client<->server when any property of a GUI component is changed.
  *
@@ -1569,6 +1639,7 @@ export type Message =
   | MeshMessage
   | BoxMessage
   | IcosphereMessage
+  | CylinderMessage
   | SkinnedMeshMessage
   | BatchedMeshesMessage
   | BatchedGlbMessage
@@ -1607,6 +1678,7 @@ export type Message =
   | ViewerCameraMessage
   | ScenePointerMessage
   | ScenePointerEnableMessage
+  | FogMessage
   | EnvironmentMapMessage
   | EnableLightsMessage
   | SetBoneOrientationMessage
@@ -1629,6 +1701,7 @@ export type Message =
   | ResetGuiMessage
   | GuiModalMessage
   | GuiCloseModalMessage
+  | GuiButtonHoldMessage
   | GuiUpdateMessage
   | SceneNodeUpdateMessage
   | ThemeConfigurationMessage
@@ -1661,6 +1734,7 @@ export type SceneNodeMessage =
   | MeshMessage
   | BoxMessage
   | IcosphereMessage
+  | CylinderMessage
   | SkinnedMeshMessage
   | BatchedMeshesMessage
   | BatchedGlbMessage
@@ -1710,6 +1784,7 @@ const typeSetSceneNodeMessage = new Set([
   "MeshMessage",
   "BoxMessage",
   "IcosphereMessage",
+  "CylinderMessage",
   "SkinnedMeshMessage",
   "BatchedMeshesMessage",
   "BatchedGlbMessage",

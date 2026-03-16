@@ -17,20 +17,25 @@ function CrosshairVisual({
   visible: boolean;
   children?: React.ReactNode;
 }) {
-  const { camera } = useThree();
+  const { camera, size } = useThree();
   const groupRef = useRef<THREE.Group>(null);
+
+  // Target crosshair size in pixels.
+  const TARGET_PIXEL_SIZE = 20;
 
   const worldPos = new THREE.Vector3();
   useFrame(() => {
     if (groupRef.current && visible) {
       // Get world position of the crosshair.
       groupRef.current.getWorldPosition(worldPos);
-      // Scale based on distance and FOV to maintain consistent visual size.
+      // Scale based on distance, FOV, and viewport size to maintain consistent pixel size.
       const distance = camera.position.distanceTo(worldPos);
       const fovScale = Math.tan(
         ((camera as THREE.PerspectiveCamera).fov * Math.PI) / 360,
       );
-      groupRef.current.scale.setScalar((distance / 20) * fovScale);
+      // Convert target pixel size to world-space scale.
+      const pixelToWorldScale = (2 * distance * fovScale) / size.height;
+      groupRef.current.scale.setScalar(TARGET_PIXEL_SIZE * pixelToWorldScale);
     }
   });
 
@@ -133,12 +138,6 @@ export function SynchronizedCameraControls() {
   const camera = useThree((state) => state.camera as PerspectiveCamera);
 
   const sendCameraThrottled = useThrottledMessageSender(20).send;
-
-  // Helper for resetting camera poses.
-  const initialCameraRef = useRef<{
-    camera: PerspectiveCamera;
-    lookAt: THREE.Vector3;
-  } | null>(null);
 
   const pivotRef = useRef<THREE.Group>(null);
 
@@ -293,22 +292,54 @@ export function SynchronizedCameraControls() {
     pivotRef.current.updateMatrixWorld(true);
   };
 
-  viewerMutable.resetCameraView = () => {
-    camera.up.set(
-      initialCameraRef.current!.camera.up.x,
-      initialCameraRef.current!.camera.up.y,
-      initialCameraRef.current!.camera.up.z,
-    );
+  viewerMutable.resetCameraPose = (animate: boolean) => {
+    // Read initial camera state from the Zustand store.
+    const initialCameraState = viewer.useInitialCamera.getState();
+    const T_threeworld_world = computeT_threeworld_world(viewer);
+
+    // Skip the up direction transform for the default up direction. This makes
+    // it so the initial camera up always matches the initial scene up, except
+    // in the case where the up direction was explicitly set.
+    const initialUp = new THREE.Vector3(...initialCameraState.up.value);
+    if (initialCameraState.position.source !== "default") {
+      initialUp.applyMatrix4(T_threeworld_world);
+    }
+    initialUp.normalize();
+
+    const initialPos = new THREE.Vector3(...initialCameraState.position.value);
+    initialPos.applyMatrix4(T_threeworld_world);
+
+    const initialLookAt = new THREE.Vector3(...initialCameraState.lookAt.value);
+    initialLookAt.applyMatrix4(T_threeworld_world);
+
+    camera.up.set(initialUp.x, initialUp.y, initialUp.z);
     viewerMutable.cameraControl!.updateCameraUp();
-    viewerMutable.cameraControl!.setLookAt(
-      initialCameraRef.current!.camera.position.x,
-      initialCameraRef.current!.camera.position.y,
-      initialCameraRef.current!.camera.position.z,
-      initialCameraRef.current!.lookAt.x,
-      initialCameraRef.current!.lookAt.y,
-      initialCameraRef.current!.lookAt.z,
-      true,
-    );
+    if (animate) {
+      viewerMutable.cameraControl!.setLookAt(
+        initialPos.x,
+        initialPos.y,
+        initialPos.z,
+        initialLookAt.x,
+        initialLookAt.y,
+        initialLookAt.z,
+        true,
+      );
+    } else {
+      // Calling setLookAt with animate = false seems to break future calls to
+      // setLookAt. Possible dpeendency bug.
+      viewerMutable.cameraControl!.setPosition(
+        initialPos.x,
+        initialPos.y,
+        initialPos.z,
+        false,
+      );
+      viewerMutable.cameraControl!.setTarget(
+        initialLookAt.x,
+        initialLookAt.y,
+        initialLookAt.z,
+        false,
+      );
+    }
   };
 
   // Callback for sending cameras.
@@ -351,14 +382,6 @@ export function SynchronizedCameraControls() {
     camera_control.getTarget(lookAt).applyQuaternion(R_world_threeworld);
     const up = three_camera.up.clone().applyQuaternion(R_world_threeworld);
 
-    // Store initial camera values.
-    if (initialCameraRef.current === null) {
-      initialCameraRef.current = {
-        camera: three_camera.clone(),
-        lookAt: camera_control.getTarget(new THREE.Vector3()),
-      };
-    }
-
     T_world_camera.decompose(t_world_camera, R_world_camera, scale);
 
     sendCameraThrottled({
@@ -381,6 +404,7 @@ export function SynchronizedCameraControls() {
 
     // Log camera.
     if (logCamera) {
+      const fovRadians = (three_camera.fov * Math.PI) / 180.0;
       console.log(
         `&initialCameraPosition=${t_world_camera.x.toFixed(
           3,
@@ -390,18 +414,15 @@ export function SynchronizedCameraControls() {
           )},${lookAt.z.toFixed(3)}` +
           `&initialCameraUp=${up.x.toFixed(3)},${up.y.toFixed(
             3,
-          )},${up.z.toFixed(3)}`,
+          )},${up.z.toFixed(3)}` +
+          `&initialCameraFov=${fovRadians.toFixed(4)}` +
+          `&initialCameraNear=${three_camera.near}` +
+          `&initialCameraFar=${three_camera.far}`,
       );
     }
   }, [camera, sendCameraThrottled]);
 
-  // Camera control search parameters.
-  // EXPERIMENTAL: these may be removed or renamed in the future. Please pin to
-  // a commit/version if you're relying on this (undocumented) feature.
   const searchParams = new URLSearchParams(window.location.search);
-  const initialCameraPosString = searchParams.get("initialCameraPosition");
-  const initialCameraLookAtString = searchParams.get("initialCameraLookAt");
-  const initialCameraUpString = searchParams.get("initialCameraUp");
   const forceOrbitOriginTool = searchParams.get("forceOrbitOriginTool") === "1";
   const logCamera = viewer.useDevSettings((state) => state.logCamera);
 
@@ -413,50 +434,24 @@ export function SynchronizedCameraControls() {
   const initialCameraPositionSet = React.useRef(false);
   React.useEffect(() => {
     if (!initialCameraPositionSet.current) {
-      const initialCameraPos = new THREE.Vector3(
-        ...((initialCameraPosString
-          ? (initialCameraPosString.split(",").map(Number) as [
-              number,
-              number,
-              number,
-            ])
-          : [3.0, 3.0, 3.0]) as [number, number, number]),
-      );
-      initialCameraPos.applyMatrix4(computeT_threeworld_world(viewer));
-      const initialCameraLookAt = new THREE.Vector3(
-        ...((initialCameraLookAtString
-          ? (initialCameraLookAtString.split(",").map(Number) as [
-              number,
-              number,
-              number,
-            ])
-          : [0, 0, 0]) as [number, number, number]),
-      );
-      initialCameraLookAt.applyMatrix4(computeT_threeworld_world(viewer));
-      const initialCameraUp = new THREE.Vector3(
-        ...((initialCameraUpString
-          ? (initialCameraUpString.split(",").map(Number) as [
-              number,
-              number,
-              number,
-            ])
-          : [0, 0, 1]) as [number, number, number]),
-      );
-      initialCameraUp.applyMatrix4(computeT_threeworld_world(viewer));
-      initialCameraUp.normalize();
+      // Reset position, orientation, and up direction.
+      viewerMutable.resetCameraPose!(false);
 
-      camera.up.set(initialCameraUp.x, initialCameraUp.y, initialCameraUp.z);
-      viewerMutable.cameraControl!.updateCameraUp();
+      // Read initial camera state from the Zustand store.
+      // This contains defaults, URL params, or will be updated by server messages.
+      const initialCameraState = viewer.useInitialCamera.getState();
 
-      viewerMutable.cameraControl!.setLookAt(
-        initialCameraPos.x,
-        initialCameraPos.y,
-        initialCameraPos.z,
-        initialCameraLookAt.x,
-        initialCameraLookAt.y,
-        initialCameraLookAt.z,
-        false,
+      // Apply fov/near/far from the store.
+      // tan(fov / 2.0) = 0.5 * film height / focal length
+      // focal length = 0.5 * film height / tan(fov / 2.0)
+      camera.setFocalLength(
+        (0.5 * camera.getFilmHeight()) /
+          Math.tan(initialCameraState.fov.value / 2.0),
       );
+      camera.near = initialCameraState.near.value;
+      camera.far = initialCameraState.far.value;
+      camera.updateProjectionMatrix();
+
       initialCameraPositionSet.current = true;
     }
 
