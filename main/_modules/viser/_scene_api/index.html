@@ -592,6 +592,7 @@
         <span class="p">)</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_done_cb</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="kc">None</span> <span class="o">|</span> <span class="n">Coroutine</span><span class="p">]</span> <span class="o">=</span> <span class="k">lambda</span><span class="p">:</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_event_type</span><span class="p">:</span> <span class="n">_messages</span><span class="o">.</span><span class="n">ScenePointerEventType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_keyboard</span><span class="p">:</span> <span class="n">_messages</span><span class="o">.</span><span class="n">ScenePointerKeyboard</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="c1"># Set up world axes handle.</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">world_axes</span><span class="p">:</span> <span class="n">FrameHandle</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">add_frame</span><span class="p">(</span>
@@ -3160,7 +3161,7 @@
 <div class="viewcode-block" id="SceneApi.on_pointer_event">
 <a class="viewcode-back" href="../../../api/core/scene_api/#viser.SceneApi.on_pointer_event">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">on_pointer_event</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">event_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;click&quot;</span><span class="p">,</span> <span class="s2">&quot;rect-select&quot;</span><span class="p">]</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">event_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;click&quot;</span><span class="p">,</span> <span class="s2">&quot;rect-select&quot;</span><span class="p">],</span> <span class="n">keyboard</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;ctrl&quot;</span><span class="p">,</span> <span class="s2">&quot;shift&quot;</span><span class="p">,</span> <span class="s2">&quot;alt&quot;</span><span class="p">,</span> <span class="s2">&quot;meta&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[</span>
         <span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">ScenePointerEvent</span><span class="p">],</span> <span class="kc">None</span><span class="p">]],</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">ScenePointerEvent</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span>
     <span class="p">]:</span>
@@ -3168,9 +3169,12 @@
 
 <span class="sd">        Args:</span>
 <span class="sd">            event_type: event to listen to.</span>
+<span class="sd">            keyboard: if not None, the event will only be triggered when the keyboard key is pressed.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># Ensure the event type is valid.</span>
         <span class="k">assert</span> <span class="n">event_type</span> <span class="ow">in</span> <span class="n">get_args</span><span class="p">(</span><span class="n">_messages</span><span class="o">.</span><span class="n">ScenePointerEventType</span><span class="p">)</span>
+        <span class="c1"># Ensure the keyboard key is valid.</span>
+        <span class="k">assert</span> <span class="n">keyboard</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">keyboard</span> <span class="ow">in</span> <span class="n">get_args</span><span class="p">(</span><span class="n">_messages</span><span class="o">.</span><span class="n">ScenePointerKeyboard</span><span class="p">)</span>
 
         <span class="kn">from</span><span class="w"> </span><span class="nn">._viser</span><span class="w"> </span><span class="kn">import</span> <span class="n">ClientHandle</span><span class="p">,</span> <span class="n">ViserServer</span>
 
@@ -3202,9 +3206,10 @@
 
             <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_cb</span> <span class="o">=</span> <span class="n">func</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_event_type</span> <span class="o">=</span> <span class="n">event_type</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_keyboard</span> <span class="o">=</span> <span class="n">keyboard</span>
 
             <span class="bp">self</span><span class="o">.</span><span class="n">_websock_interface</span><span class="o">.</span><span class="n">queue_message</span><span class="p">(</span>
-                <span class="n">_messages</span><span class="o">.</span><span class="n">ScenePointerEnableMessage</span><span class="p">(</span><span class="n">enable</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">event_type</span><span class="o">=</span><span class="n">event_type</span><span class="p">)</span>
+                <span class="n">_messages</span><span class="o">.</span><span class="n">ScenePointerEnableMessage</span><span class="p">(</span><span class="n">enable</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">event_type</span><span class="o">=</span><span class="n">event_type</span><span class="p">,</span> <span class="n">keyboard</span><span class="o">=</span><span class="n">keyboard</span><span class="p">)</span>
             <span class="p">)</span>
             <span class="k">return</span> <span class="n">func</span>
 
@@ -3247,9 +3252,10 @@
 
         <span class="c1"># Notify client that the listener has been removed.</span>
         <span class="n">event_type</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_event_type</span>
+        <span class="n">keyboard</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_keyboard</span>
         <span class="k">assert</span> <span class="n">event_type</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_websock_interface</span><span class="o">.</span><span class="n">queue_message</span><span class="p">(</span>
-            <span class="n">_messages</span><span class="o">.</span><span class="n">ScenePointerEnableMessage</span><span class="p">(</span><span class="n">enable</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">event_type</span><span class="o">=</span><span class="n">event_type</span><span class="p">)</span>
+            <span class="n">_messages</span><span class="o">.</span><span class="n">ScenePointerEnableMessage</span><span class="p">(</span><span class="n">enable</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">event_type</span><span class="o">=</span><span class="n">event_type</span><span class="p">,</span> <span class="n">keyboard</span><span class="o">=</span><span class="n">keyboard</span><span class="p">)</span>
         <span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_owner</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
 
@@ -3262,7 +3268,8 @@
         <span class="c1"># Reset the callback and event type, on the python side.</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_cb</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_done_cb</span> <span class="o">=</span> <span class="k">lambda</span><span class="p">:</span> <span class="kc">None</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_event_type</span> <span class="o">=</span> <span class="kc">None</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_event_type</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_scene_pointer_binding</span> <span class="o">=</span> <span class="kc">None</span></div>
 
 
 <div class="viewcode-block" id="SceneApi.add_3d_gui_container">

@@ -433,7 +433,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Coroutine</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolExecutor</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">ContextManager</span><span class="p">,</span> <span class="n">TypeVar</span><span class="p">,</span> <span class="n">cast</span><span class="p">,</span> <span class="n">overload</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">ContextManager</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">TypeVar</span><span class="p">,</span> <span class="n">cast</span><span class="p">,</span> <span class="n">overload</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">imageio.v3</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">iio</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
@@ -887,6 +887,8 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Unique ID for this client.&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="p">:</span> <span class="n">CameraHandle</span> <span class="o">=</span> <span class="n">CameraHandle</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Handle for reading from and manipulating the client&#39;s viewport camera.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">browser_info</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">_messages</span><span class="o">.</span><span class="n">BrowserInfoMessage</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Browser info for this client.&quot;&quot;&quot;</span>
 
 <div class="viewcode-block" id="ClientHandle.flush">
 <a class="viewcode-back" href="../../../api/handles/client_handles/#viser.ClientHandle.flush">[docs]</a>
@@ -1214,6 +1216,8 @@
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_thread_executor</span> <span class="o">=</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">32</span><span class="p">)</span>
 
+        <span class="bp">self</span><span class="o">.</span><span class="n">_client_browser_info_cbs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">ClientHandle</span><span class="p">,</span> <span class="n">_messages</span><span class="o">.</span><span class="n">BrowserInfoMessage</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+
         <span class="c1"># Run &quot;garbage collector&quot; on message buffer when new clients connect.</span>
         <span class="nd">@server</span><span class="o">.</span><span class="n">on_client_connect</span>
         <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_</span><span class="p">(</span><span class="n">_</span><span class="p">:</span> <span class="n">infra</span><span class="o">.</span><span class="n">WebsockClientConnection</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -1271,6 +1275,17 @@
                         <span class="p">)</span><span class="o">.</span><span class="n">add_done_callback</span><span class="p">(</span><span class="n">print_threadpool_errors</span><span class="p">)</span>
 
             <span class="n">conn</span><span class="o">.</span><span class="n">register_handler</span><span class="p">(</span><span class="n">_messages</span><span class="o">.</span><span class="n">ViewerCameraMessage</span><span class="p">,</span> <span class="n">handle_camera_message</span><span class="p">)</span>
+
+            <span class="k">def</span><span class="w"> </span><span class="nf">handle_browser_info</span><span class="p">(</span>
+                <span class="n">client_id</span><span class="p">:</span> <span class="n">infra</span><span class="o">.</span><span class="n">ClientId</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">_messages</span><span class="o">.</span><span class="n">BrowserInfoMessage</span>
+            <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="n">client_id</span> <span class="o">==</span> <span class="n">client</span><span class="o">.</span><span class="n">client_id</span>
+
+                <span class="n">client</span><span class="o">.</span><span class="n">browser_info</span> <span class="o">=</span> <span class="n">message</span>
+                <span class="k">for</span> <span class="n">cb</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client_browser_info_cbs</span><span class="p">:</span>
+                    <span class="n">cb</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">message</span><span class="p">)</span>
+
+            <span class="n">conn</span><span class="o">.</span><span class="n">register_handler</span><span class="p">(</span><span class="n">_messages</span><span class="o">.</span><span class="n">BrowserInfoMessage</span><span class="p">,</span> <span class="n">handle_browser_info</span><span class="p">)</span>
 
         <span class="c1"># Remove clients when they disconnect.</span>
         <span class="nd">@server</span><span class="o">.</span><span class="n">on_client_disconnect</span>
@@ -1727,6 +1742,21 @@
         <span class="k">for</span> <span class="n">message</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_websock_server</span><span class="o">.</span><span class="n">_broadcast_buffer</span><span class="o">.</span><span class="n">message_from_id</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
             <span class="n">serializer</span><span class="o">.</span><span class="n">_insert_message</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">serializer</span></div>
+
+
+<div class="viewcode-block" id="ViserServer.on_browser_info">
+<a class="viewcode-back" href="../../../api/core/server/#viser.ViserServer.on_browser_info">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">on_browser_info</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cb</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">ClientHandle</span><span class="p">,</span> <span class="n">_messages</span><span class="o">.</span><span class="n">BrowserInfoMessage</span><span class="p">],</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">ClientHandle</span><span class="p">,</span> <span class="n">_messages</span><span class="o">.</span><span class="n">BrowserInfoMessage</span><span class="p">],</span> <span class="kc">None</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Register a callback for BrowserInfoMessages from clients.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cb: Callback function.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Callback function.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_client_browser_info_cbs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cb</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">cb</span></div>
 </div>
 
 </pre></div>
