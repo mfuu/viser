@@ -2,7 +2,7 @@ import * as React from "react";
 import { useDisclosure } from "@mantine/hooks";
 import { GuiFolderMessage } from "../WebsocketMessages";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
-import { Box, Collapse, Paper } from "@mantine/core";
+import { Box, Collapse, Paper, Text } from "@mantine/core";
 import { GuiComponentContext } from "../ControlPanel/GuiComponentContext";
 import { ViewerContext } from "../ViewerContext";
 import { folderLabel, folderToggleIcon, folderWrapper } from "./Folder.css";
@@ -40,7 +40,7 @@ export default function FolderComponent({
         }}
         onClick={toggle}
       >
-        {label}
+        <Text fz="sm" fw={500} truncate="end" title={label}>{label}</Text>
         <ToggleIcon
           className={folderToggleIcon}
           style={{

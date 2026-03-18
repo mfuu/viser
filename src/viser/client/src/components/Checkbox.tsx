@@ -36,7 +36,7 @@ export default function CheckboxComponent({
         openDelay={500}
         withinPortal
       >
-        <Box style={{ display: "inline-block" }}>{input}</Box>
+        <Box style={{ display: "inline-block", verticalAlign: "middle" }}>{input}</Box>
       </Tooltip>
     );
   }
