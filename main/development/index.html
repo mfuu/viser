@@ -314,6 +314,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../examples/scene/set_up_direction/">Set up direction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../examples/scene/gaussian_splats/">Gaussian splats</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../examples/scene/fog/">Distance fog</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../examples/scene/arrows/">Arrow visualization</a></li>
 </ul>
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../examples/gui/">GUI Controls</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><div class="visually-hidden">Toggle navigation of GUI Controls</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
@@ -327,6 +328,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../examples/gui/plotly_integration/">Plotly integration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../examples/gui/uplot/">uPlot integration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../examples/gui/plots_as_images/">Plots as images</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../examples/gui/commands/">Commands</a></li>
 </ul>
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../examples/interaction/">User Interaction</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><div class="visually-hidden">Toggle navigation of User Interaction</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
@@ -336,6 +338,8 @@
 <li class="toctree-l2"><a class="reference internal" href="../examples/interaction/camera_poses/">Camera pose tracking</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../examples/interaction/camera_commands/">Programmatic camera control</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../examples/interaction/gui_in_scene/">3D GUI elements</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../examples/interaction/scene_node_drag/">Scene-node drag events with rigid-body physics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../examples/interaction/batched_scene_node_drag/">Drag events on batched scene nodes</a></li>
 </ul>
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../examples/demos/">Demos</a><input class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" role="switch" type="checkbox"/><label for="toctree-checkbox-5"><div class="visually-hidden">Toggle navigation of Demos</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
@@ -507,6 +511,44 @@ uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </sp
 <li><p>Updating the version in <code class="docutils literal notranslate"><span class="pre">__init__.py</span></code></p></li>
 </ul>
 </section>
+<section id="wire-format">
+<h3>Wire Format<a class="headerlink" href="#wire-format" title="Link to this heading">¶</a></h3>
+<p>Messages are sent over WebSocket using a hybrid format that separates lightweight
+metadata from binary array data.</p>
+<p><strong>Encoding (Python server):</strong></p>
+<ol class="arabic simple">
+<li><p>Binary arrays (numpy) are extracted from messages and replaced with tagged
+placeholder dicts: <code class="docutils literal notranslate"><span class="pre">{&quot;__binary_index&quot;:</span> <span class="pre">i,</span> <span class="pre">&quot;dtype&quot;:</span> <span class="pre">&quot;&lt;f4&quot;}</span></code>.</p></li>
+<li><p>The remaining metadata is encoded with msgpack, then compressed with zstd.</p></li>
+<li><p>The raw binary arrays are appended uncompressed after the compressed metadata,
+with 8-byte alignment padding between buffers.</p></li>
+</ol>
+<p>The wire layout is:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">[</span><span class="mi">8</span> <span class="nb">bytes</span><span class="p">]</span> <span class="n">decompressed</span> <span class="n">size</span> <span class="n">of</span> <span class="n">msgpack</span> <span class="p">(</span><span class="n">little</span><span class="o">-</span><span class="n">endian</span> <span class="n">uint64</span><span class="p">)</span>
+<span class="p">[</span><span class="mi">8</span> <span class="nb">bytes</span><span class="p">]</span> <span class="n">compressed</span> <span class="n">size</span> <span class="n">of</span> <span class="n">msgpack</span> <span class="p">(</span><span class="n">little</span><span class="o">-</span><span class="n">endian</span> <span class="n">uint64</span><span class="p">)</span>
+<span class="p">[</span><span class="n">N</span> <span class="nb">bytes</span><span class="p">]</span> <span class="n">zstd</span><span class="o">-</span><span class="n">compressed</span> <span class="n">msgpack</span> <span class="n">payload</span>
+<span class="p">[</span><span class="n">P</span> <span class="nb">bytes</span><span class="p">]</span> <span class="n">padding</span> <span class="n">to</span> <span class="mi">8</span><span class="o">-</span><span class="n">byte</span> <span class="n">alignment</span>
+<span class="p">[</span><span class="n">B</span> <span class="nb">bytes</span><span class="p">]</span> <span class="n">concatenated</span> <span class="n">binary</span> <span class="n">buffers</span> <span class="p">(</span><span class="n">each</span> <span class="mi">8</span><span class="o">-</span><span class="n">byte</span> <span class="n">aligned</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>Decoding (TypeScript client):</strong></p>
+<ol class="arabic simple">
+<li><p>The zstd-compressed msgpack metadata is decompressed and decoded.</p></li>
+<li><p>Placeholder dicts are replaced with typed array views (<code class="docutils literal notranslate"><span class="pre">Float32Array</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Uint32Array</span></code>, etc.) pointing directly into the WebSocket’s receive buffer.</p></li>
+</ol>
+<p>Because the binary data is uncompressed and 8-byte aligned, the client can create
+typed array views without copying. This is important for high-frequency streaming
+(e.g., point clouds at 30-60fps), where eliminating copies avoids GC pressure that
+would otherwise cause frame drops.</p>
+<p>Binary data is left uncompressed because float/int arrays compress poorly, and at
+high frame rates the zstd round-trip cost outweighs the modest bandwidth savings.</p>
+<p><strong>Recordings</strong> (the <code class="docutils literal notranslate"><span class="pre">.viser</span></code> file format) use the same placeholder format, but
+the entire payload (msgpack + binary) is compressed together with zstd since
+recordings aren’t latency-sensitive. An 8-byte msgpack length header precedes the
+msgpack data inside the decompressed payload so the decoder knows where the binary
+section begins.</p>
+</section>
 </section>
 <section id="client-development">
 <h2>Client development<a class="headerlink" href="#client-development" title="Link to this heading">¶</a></h2>
@@ -629,6 +671,7 @@ one of:</p>
 <li><a class="reference internal" href="#message-definitions">Message Definitions</a></li>
 <li><a class="reference internal" href="#version-compatibility">Version Compatibility</a></li>
 <li><a class="reference internal" href="#synchronization-script">Synchronization Script</a></li>
+<li><a class="reference internal" href="#wire-format">Wire Format</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#client-development">Client development</a></li>

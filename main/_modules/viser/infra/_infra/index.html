@@ -313,6 +313,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../../examples/scene/set_up_direction/">Set up direction</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../../examples/scene/gaussian_splats/">Gaussian splats</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../../examples/scene/fog/">Distance fog</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../../examples/scene/arrows/">Arrow visualization</a></li>
 </ul>
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../../../examples/gui/">GUI Controls</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" role="switch" type="checkbox"/><label for="toctree-checkbox-3"><div class="visually-hidden">Toggle navigation of GUI Controls</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
@@ -326,6 +327,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../../examples/gui/plotly_integration/">Plotly integration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../../examples/gui/uplot/">uPlot integration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../../examples/gui/plots_as_images/">Plots as images</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../../examples/gui/commands/">Commands</a></li>
 </ul>
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../../../examples/interaction/">User Interaction</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" role="switch" type="checkbox"/><label for="toctree-checkbox-4"><div class="visually-hidden">Toggle navigation of User Interaction</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
@@ -335,6 +337,8 @@
 <li class="toctree-l2"><a class="reference internal" href="../../../../examples/interaction/camera_poses/">Camera pose tracking</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../../examples/interaction/camera_commands/">Programmatic camera control</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../../../examples/interaction/gui_in_scene/">3D GUI elements</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../../examples/interaction/scene_node_drag/">Scene-node drag events with rigid-body physics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../../../examples/interaction/batched_scene_node_drag/">Drag events on batched scene nodes</a></li>
 </ul>
 </li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../../../examples/demos/">Demos</a><input class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" role="switch" type="checkbox"/><label for="toctree-checkbox-5"><div class="visually-hidden">Toggle navigation of Demos</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
@@ -446,7 +450,7 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">websockets.datastructures</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">websockets.exceptions</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">zstandard</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing_extensions</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">assert_never</span><span class="p">,</span> <span class="n">override</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing_extensions</span><span class="w"> </span><span class="kn">import</span> <span class="n">override</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">websockets</span><span class="w"> </span><span class="kn">import</span> <span class="n">Headers</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">websockets.asyncio.server</span><span class="w"> </span><span class="kn">import</span> <span class="n">ServerConnection</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">websockets.http11</span><span class="w"> </span><span class="kn">import</span> <span class="n">Request</span><span class="p">,</span> <span class="n">Response</span>
@@ -482,6 +486,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">_handler</span> <span class="o">=</span> <span class="n">handler</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_filter</span> <span class="o">=</span> <span class="nb">filter</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_time</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_binary_buffers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">memoryview</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">[]</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_insert_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">Message</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -491,7 +496,9 @@
         <span class="c1"># GUI messages.</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_filter</span><span class="p">(</span><span class="n">message</span><span class="p">):</span>
             <span class="k">return</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_messages</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">_time</span><span class="p">,</span> <span class="n">message</span><span class="o">.</span><span class="n">as_serializable_dict</span><span class="p">()))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_time</span><span class="p">,</span> <span class="n">message</span><span class="o">.</span><span class="n">as_serializable_dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_binary_buffers</span><span class="p">))</span>
+        <span class="p">)</span>
 
 <div class="viewcode-block" id="StateSerializer.insert_sleep">
 <a class="viewcode-back" href="../../../../api/auxiliary/infrastructure/#viser.infra.StateSerializer.insert_sleep">[docs]</a>
@@ -514,19 +521,66 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">assert</span> <span class="bp">self</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_handler</span><span class="o">.</span><span class="n">_record_handles</span><span class="p">,</span> <span class="s2">&quot;serialize() was already called!&quot;</span>
 
-        <span class="n">packed_bytes</span> <span class="o">=</span> <span class="n">msgspec</span><span class="o">.</span><span class="n">msgpack</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
+        <span class="c1"># Same hybrid format as the live wire path: msgpack metadata with</span>
+        <span class="c1"># tagged placeholders for binary arrays, followed by raw aligned</span>
+        <span class="c1"># binary data.</span>
+        <span class="n">msgpack_payload</span> <span class="o">=</span> <span class="n">msgspec</span><span class="o">.</span><span class="n">msgpack</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
             <span class="p">{</span>
                 <span class="s2">&quot;durationSeconds&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_time</span><span class="p">,</span>
                 <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_messages</span><span class="p">,</span>
                 <span class="s2">&quot;viserVersion&quot;</span><span class="p">:</span> <span class="n">viser</span><span class="o">.</span><span class="n">__version__</span><span class="p">,</span>
+                <span class="s2">&quot;binaryBufferLengths&quot;</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">b</span><span class="o">.</span><span class="n">nbytes</span> <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_binary_buffers</span><span class="p">),</span>
             <span class="p">}</span>
         <span class="p">)</span>
-        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">packed_bytes</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">msgpack_payload</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_handler</span><span class="o">.</span><span class="n">_record_handles</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-        <span class="c1"># Use zstd for better compression ratio and speed.</span>
-        <span class="c1"># Prepend 8-byte size header for decompressor.</span>
-        <span class="n">compressed</span> <span class="o">=</span> <span class="n">zstandard</span><span class="o">.</span><span class="n">ZstdCompressor</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="mi">12</span><span class="p">)</span><span class="o">.</span><span class="n">compress</span><span class="p">(</span><span class="n">packed_bytes</span><span class="p">)</span>
-        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">packed_bytes</span><span class="p">)</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;little&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">compressed</span></div>
+
+        <span class="c1"># Build uncompressed inner payload:</span>
+        <span class="c1">#   [8 bytes] msgpack length (little-endian uint64)</span>
+        <span class="c1">#   [N bytes] msgpack payload</span>
+        <span class="c1">#   [P bytes] padding + aligned binary buffers...</span>
+        <span class="n">msgpack_len_header</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">msgpack_payload</span><span class="p">)</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;little&quot;</span><span class="p">)</span>
+        <span class="n">parts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bytes</span> <span class="o">|</span> <span class="nb">memoryview</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">msgpack_len_header</span><span class="p">,</span> <span class="n">msgpack_payload</span><span class="p">]</span>
+        <span class="n">_append_aligned_buffers</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_binary_buffers</span><span class="p">,</span> <span class="mi">8</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">msgpack_payload</span><span class="p">))</span>
+        <span class="n">inner</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+
+        <span class="c1"># Compress everything together. Recordings aren&#39;t latency-sensitive.</span>
+        <span class="n">compressed</span> <span class="o">=</span> <span class="n">zstandard</span><span class="o">.</span><span class="n">ZstdCompressor</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="mi">12</span><span class="p">)</span><span class="o">.</span><span class="n">compress</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;little&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">compressed</span></div>
+
+
+<div class="viewcode-block" id="StateSerializer.as_html">
+<a class="viewcode-back" href="../../../../api/auxiliary/infrastructure/#viser.infra.StateSerializer.as_html">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">as_html</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dark_mode</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get a standalone HTML string for the serialized scene.</span>
+
+<span class="sd">        Returns a self-contained HTML document that can be saved to a file</span>
+<span class="sd">        or embedded in other contexts.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            dark_mode: Use dark color scheme.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A complete HTML document as a string.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">scene_bytes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">serialize</span><span class="p">()</span>
+        <span class="n">scene_b64</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">scene_bytes</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s2">&quot;ascii&quot;</span><span class="p">)</span>
+
+        <span class="c1"># Get client HTML and inject scene data as global variables.</span>
+        <span class="c1"># The client reads from window.__VISER_EMBED_DATA__ (App.tsx).</span>
+        <span class="n">client_html_path</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span> <span class="o">/</span> <span class="s2">&quot;client&quot;</span> <span class="o">/</span> <span class="s2">&quot;build&quot;</span> <span class="o">/</span> <span class="s2">&quot;index.html&quot;</span>
+        <span class="p">)</span>
+        <span class="n">client_html</span> <span class="o">=</span> <span class="n">client_html_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+        <span class="n">dark_mode_str</span> <span class="o">=</span> <span class="s2">&quot;true&quot;</span> <span class="k">if</span> <span class="n">dark_mode</span> <span class="k">else</span> <span class="s2">&quot;false&quot;</span>
+        <span class="n">inject_script</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;&lt;script&gt;&quot;</span>
+            <span class="sa">f</span><span class="s1">&#39;window.__VISER_EMBED_DATA__=&quot;</span><span class="si">{</span><span class="n">scene_b64</span><span class="si">}</span><span class="s1">&quot;;&#39;</span>
+            <span class="sa">f</span><span class="s2">&quot;window.__VISER_EMBED_CONFIG__=</span><span class="se">{{</span><span class="s2">darkMode:</span><span class="si">{</span><span class="n">dark_mode_str</span><span class="si">}</span><span class="se">}}</span><span class="s2">;&quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;&lt;/script&gt;&quot;</span>
+        <span class="p">)</span>
+        <span class="n">head_end</span> <span class="o">=</span> <span class="n">client_html</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="s2">&quot;&lt;/head&gt;&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">client_html</span><span class="p">[:</span><span class="n">head_end</span><span class="p">]</span> <span class="o">+</span> <span class="n">inject_script</span> <span class="o">+</span> <span class="n">client_html</span><span class="p">[</span><span class="n">head_end</span><span class="p">:]</span></div>
 
 
 <div class="viewcode-block" id="StateSerializer.show">
@@ -545,23 +599,7 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="kn">import</span><span class="w"> </span><span class="nn">html</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">html_module</span>
 
-        <span class="n">scene_bytes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">serialize</span><span class="p">()</span>
-        <span class="n">scene_b64</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">scene_bytes</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s2">&quot;ascii&quot;</span><span class="p">)</span>
-
-        <span class="c1"># Get client HTML and inject scene data as global variables.</span>
-        <span class="c1"># The client reads from window.__VISER_EMBED_DATA__ (App.tsx).</span>
-        <span class="n">client_html_path</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span> <span class="o">/</span> <span class="s2">&quot;client&quot;</span> <span class="o">/</span> <span class="s2">&quot;build&quot;</span> <span class="o">/</span> <span class="s2">&quot;index.html&quot;</span>
-        <span class="p">)</span>
-        <span class="n">client_html</span> <span class="o">=</span> <span class="n">client_html_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
-        <span class="n">dark_mode_str</span> <span class="o">=</span> <span class="s2">&quot;true&quot;</span> <span class="k">if</span> <span class="n">dark_mode</span> <span class="k">else</span> <span class="s2">&quot;false&quot;</span>
-        <span class="n">inject_script</span> <span class="o">=</span> <span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;&lt;script&gt;&quot;</span>
-            <span class="sa">f</span><span class="s1">&#39;window.__VISER_EMBED_DATA__=&quot;</span><span class="si">{</span><span class="n">scene_b64</span><span class="si">}</span><span class="s1">&quot;;&#39;</span>
-            <span class="sa">f</span><span class="s2">&quot;window.__VISER_EMBED_CONFIG__=</span><span class="se">{{</span><span class="s2">darkMode:</span><span class="si">{</span><span class="n">dark_mode_str</span><span class="si">}</span><span class="se">}}</span><span class="s2">;&quot;</span>
-            <span class="sa">f</span><span class="s2">&quot;&lt;/script&gt;&quot;</span>
-        <span class="p">)</span>
-        <span class="n">modified_html</span> <span class="o">=</span> <span class="n">client_html</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;&lt;/head&gt;&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">inject_script</span><span class="si">}</span><span class="s2">&lt;/head&gt;&quot;</span><span class="p">)</span>
+        <span class="n">modified_html</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">as_html</span><span class="p">(</span><span class="n">dark_mode</span><span class="o">=</span><span class="n">dark_mode</span><span class="p">)</span>
 
         <span class="c1"># Display in IPython (Jupyter, Colab, myst-nb, etc.) using srcdoc.</span>
         <span class="c1"># This embeds the entire HTML inline, avoiding file serving issues.</span>
@@ -751,8 +789,6 @@
 <span class="sd">            required in the future.</span>
 <span class="sd">        http_server_root: Path to root for HTTP server.</span>
 <span class="sd">        verbose: Toggle for print messages.</span>
-<span class="sd">        client_api_version: Flag for backwards compatibility. 0 sends individual</span>
-<span class="sd">            messages. 1 sends windowed messages.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
@@ -762,7 +798,6 @@
         <span class="n">message_class</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">Message</span><span class="p">]</span> <span class="o">=</span> <span class="n">Message</span><span class="p">,</span>
         <span class="n">http_server_root</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-        <span class="n">client_api_version</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
     <span class="p">):</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
 
@@ -779,7 +814,6 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">_message_class</span> <span class="o">=</span> <span class="n">message_class</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_http_server_root</span> <span class="o">=</span> <span class="n">http_server_root</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_verbose</span> <span class="o">=</span> <span class="n">verbose</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_client_api_version</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">client_api_version</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_background_event_loop</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">AbstractEventLoop</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_stop_event</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Event</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
@@ -835,7 +869,7 @@
         <span class="c1"># Clean up the message buffers. This isn&#39;t really necessary, but helps</span>
         <span class="c1"># avoid &quot;task destroyed&quot; errors.</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_broadcast_buffer</span><span class="o">.</span><span class="n">set_done</span><span class="p">()</span>
-        <span class="k">for</span> <span class="n">client</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client_state_from_id</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">client</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_client_state_from_id</span><span class="o">.</span><span class="n">values</span><span class="p">()):</span>
             <span class="n">client</span><span class="o">.</span><span class="n">message_buffer</span><span class="o">.</span><span class="n">set_done</span><span class="p">()</span>
 
         <span class="c1"># Wait for the server thread to finish.</span>
@@ -921,25 +955,24 @@
                 <span class="n">total_connections</span> <span class="o">+=</span> <span class="mi">1</span>
 
             <span class="c1"># Version check to make sure Viser server/client match.</span>
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client_api_version</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
-                <span class="kn">import</span><span class="w"> </span><span class="nn">viser</span>
+            <span class="kn">import</span><span class="w"> </span><span class="nn">viser</span>
 
-                <span class="c1"># Extract client version from the selected subprotocol.</span>
-                <span class="n">client_version_str</span> <span class="o">=</span> <span class="s2">&quot;unknown&quot;</span>
-                <span class="k">if</span> <span class="n">connection</span><span class="o">.</span><span class="n">subprotocol</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                    <span class="k">if</span> <span class="n">connection</span><span class="o">.</span><span class="n">subprotocol</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;viser-v&quot;</span><span class="p">):</span>
-                        <span class="n">client_version_str</span> <span class="o">=</span> <span class="n">connection</span><span class="o">.</span><span class="n">subprotocol</span><span class="p">[</span><span class="mi">7</span><span class="p">:]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="c1"># Extract client version from the selected subprotocol.</span>
+            <span class="n">client_version_str</span> <span class="o">=</span> <span class="s2">&quot;unknown&quot;</span>
+            <span class="k">if</span> <span class="n">connection</span><span class="o">.</span><span class="n">subprotocol</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">connection</span><span class="o">.</span><span class="n">subprotocol</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;viser-v&quot;</span><span class="p">):</span>
+                    <span class="n">client_version_str</span> <span class="o">=</span> <span class="n">connection</span><span class="o">.</span><span class="n">subprotocol</span><span class="p">[</span><span class="mi">7</span><span class="p">:]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
 
-                <span class="k">if</span> <span class="n">client_version_str</span> <span class="o">!=</span> <span class="n">viser</span><span class="o">.</span><span class="n">__version__</span><span class="p">:</span>
-                    <span class="n">rich</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
-                        <span class="sa">f</span><span class="s2">&quot;[bold red](viser)[/bold red] Version mismatch - connection rejected. &quot;</span>
-                        <span class="sa">f</span><span class="s2">&quot;Client: &#39;</span><span class="si">{</span><span class="n">client_version_str</span><span class="si">}</span><span class="s2">&#39;, Server: &#39;</span><span class="si">{</span><span class="n">viser</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
-                    <span class="p">)</span>
-                    <span class="k">await</span> <span class="n">connection</span><span class="o">.</span><span class="n">close</span><span class="p">(</span>
-                        <span class="mi">1002</span><span class="p">,</span>
-                        <span class="sa">f</span><span class="s2">&quot;Version mismatch. Client: </span><span class="si">{</span><span class="n">client_version_str</span><span class="si">}</span><span class="s2">, Server: </span><span class="si">{</span><span class="n">viser</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-                    <span class="p">)</span>
-                    <span class="k">return</span>  <span class="c1"># Exit handler to prevent further processing.</span>
+            <span class="k">if</span> <span class="n">client_version_str</span> <span class="o">!=</span> <span class="n">viser</span><span class="o">.</span><span class="n">__version__</span><span class="p">:</span>
+                <span class="n">rich</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;[bold red](viser)[/bold red] Version mismatch - connection rejected. &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;Client: &#39;</span><span class="si">{</span><span class="n">client_version_str</span><span class="si">}</span><span class="s2">&#39;, Server: &#39;</span><span class="si">{</span><span class="n">viser</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+                <span class="p">)</span>
+                <span class="k">await</span> <span class="n">connection</span><span class="o">.</span><span class="n">close</span><span class="p">(</span>
+                    <span class="mi">1002</span><span class="p">,</span>
+                    <span class="sa">f</span><span class="s2">&quot;Version mismatch. Client: </span><span class="si">{</span><span class="n">client_version_str</span><span class="si">}</span><span class="s2">, Server: </span><span class="si">{</span><span class="n">viser</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">return</span>  <span class="c1"># Exit handler to prevent further processing.</span>
 
             <span class="n">client_state</span> <span class="o">=</span> <span class="n">_ClientHandleState</span><span class="p">(</span>
                 <span class="n">AsyncMessageBuffer</span><span class="p">(</span><span class="n">event_loop</span><span class="p">,</span> <span class="n">persistent_messages</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
@@ -979,13 +1012,11 @@
                         <span class="n">connection</span><span class="p">,</span>
                         <span class="n">client_state</span><span class="o">.</span><span class="n">message_buffer</span><span class="p">,</span>
                         <span class="n">client_id</span><span class="p">,</span>
-                        <span class="bp">self</span><span class="o">.</span><span class="n">_client_api_version</span><span class="p">,</span>
                     <span class="p">),</span>
                     <span class="n">_message_producer</span><span class="p">(</span>
                         <span class="n">connection</span><span class="p">,</span>
                         <span class="bp">self</span><span class="o">.</span><span class="n">_broadcast_buffer</span><span class="p">,</span>
                         <span class="n">client_id</span><span class="p">,</span>
-                        <span class="bp">self</span><span class="o">.</span><span class="n">_client_api_version</span><span class="p">,</span>
                     <span class="p">),</span>
                     <span class="n">_message_consumer</span><span class="p">(</span><span class="n">connection</span><span class="p">,</span> <span class="n">handle_incoming</span><span class="p">,</span> <span class="n">message_class</span><span class="p">),</span>
                 <span class="p">)</span>
@@ -1058,6 +1089,20 @@
                 <span class="n">relpath</span> <span class="o">=</span> <span class="s2">&quot;index.html&quot;</span>
             <span class="k">assert</span> <span class="n">http_server_root</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 
+            <span class="c1"># Reject path traversal by checking the URL parts, not</span>
+            <span class="c1"># by comparing resolved paths. Under Bazel/uv runfile</span>
+            <span class="c1"># trees, http_server_root and the files inside it can</span>
+            <span class="c1"># pass through independent symlinks (e.g. uv hardlinks</span>
+            <span class="c1"># individual files from a shared cache), so Path.resolve()</span>
+            <span class="c1"># places a legitimate child outside the resolved root.</span>
+            <span class="c1">#</span>
+            <span class="c1"># Skipping the resolved-path check means we no longer</span>
+            <span class="c1"># validate that symlinks inside http_server_root stay</span>
+            <span class="c1"># within it. That is fine here: http_server_root is set</span>
+            <span class="c1"># by the application, not by user input, so the only</span>
+            <span class="c1"># attacker-controlled component is the URL path.</span>
+            <span class="k">if</span> <span class="s2">&quot;..&quot;</span> <span class="ow">in</span> <span class="n">Path</span><span class="p">(</span><span class="n">relpath</span><span class="p">)</span><span class="o">.</span><span class="n">parts</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">Response</span><span class="p">(</span><span class="n">http</span><span class="o">.</span><span class="n">HTTPStatus</span><span class="o">.</span><span class="n">NOT_FOUND</span><span class="p">,</span> <span class="s2">&quot;NOT FOUND&quot;</span><span class="p">,</span> <span class="n">Headers</span><span class="p">())</span>
             <span class="n">source_path</span> <span class="o">=</span> <span class="n">http_server_root</span> <span class="o">/</span> <span class="n">relpath</span>
             <span class="k">if</span> <span class="ow">not</span> <span class="n">source_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
                 <span class="k">return</span> <span class="n">Response</span><span class="p">(</span><span class="n">http</span><span class="o">.</span><span class="n">HTTPStatus</span><span class="o">.</span><span class="n">NOT_FOUND</span><span class="p">,</span> <span class="s2">&quot;NOT FOUND&quot;</span><span class="p">,</span> <span class="n">Headers</span><span class="p">())</span>
@@ -1163,13 +1208,51 @@
 
 
 
+<span class="c1"># Pre-allocated padding bytes for 8-byte alignment.</span>
+<span class="n">_ALIGNMENT_PADDING</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;</span><span class="se">\x00</span><span class="s2">&quot;</span> <span class="o">*</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">8</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_append_aligned_buffers</span><span class="p">(</span>
+    <span class="n">parts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bytes</span> <span class="o">|</span> <span class="nb">memoryview</span><span class="p">],</span>
+    <span class="n">binary_buffers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">memoryview</span><span class="p">],</span>
+    <span class="n">current_offset</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Append binary buffers to `parts` with 8-byte alignment padding.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">buf</span> <span class="ow">in</span> <span class="n">binary_buffers</span><span class="p">:</span>
+        <span class="n">padding</span> <span class="o">=</span> <span class="p">(</span><span class="mi">8</span> <span class="o">-</span> <span class="p">(</span><span class="n">current_offset</span> <span class="o">%</span> <span class="mi">8</span><span class="p">))</span> <span class="o">%</span> <span class="mi">8</span>
+        <span class="k">if</span> <span class="n">padding</span><span class="p">:</span>
+            <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">_ALIGNMENT_PADDING</span><span class="p">[</span><span class="n">padding</span><span class="p">])</span>
+            <span class="n">current_offset</span> <span class="o">+=</span> <span class="n">padding</span>
+        <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+        <span class="n">current_offset</span> <span class="o">+=</span> <span class="n">buf</span><span class="o">.</span><span class="n">nbytes</span>
+
+
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_message_producer</span><span class="p">(</span>
     <span class="n">websocket</span><span class="p">:</span> <span class="n">ServerConnection</span><span class="p">,</span>
     <span class="n">buffer</span><span class="p">:</span> <span class="n">AsyncMessageBuffer</span><span class="p">,</span>
     <span class="n">client_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-    <span class="n">client_api_version</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Infinite loop to broadcast windows of messages from a buffer.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Infinite loop to broadcast windows of messages from a buffer.</span>
+
+<span class="sd">    Wire format (hybrid zstd-compressed msgpack + raw binary buffers):</span>
+<span class="sd">    - Binary arrays (numpy) are extracted from messages and replaced with</span>
+<span class="sd">      tagged placeholder dicts so msgpack.encode() doesn&#39;t walk large arrays.</span>
+<span class="sd">    - Raw binary data is appended uncompressed after the zstd-compressed</span>
+<span class="sd">      msgpack, with 8-byte alignment padding.</span>
+<span class="sd">    - On the JS side, typed array views (Float32Array, etc.) are created</span>
+<span class="sd">      directly into the WebSocket&#39;s ArrayBuffer -- zero-copy for binary data.</span>
+
+<span class="sd">    Binary data is left uncompressed because float/int arrays (point clouds,</span>
+<span class="sd">    meshes) compress poorly, and at 30-60fps the zstd compress+decompress</span>
+<span class="sd">    cost adds up. Zero-copy is more valuable than modest compression.</span>
+
+<span class="sd">    Layout:</span>
+<span class="sd">      [8 bytes] decompressed size of msgpack (little-endian uint64)</span>
+<span class="sd">      [8 bytes] compressed size of msgpack (little-endian uint64)</span>
+<span class="sd">      [N bytes] zstd-compressed msgpack payload</span>
+<span class="sd">      [P bytes] padding to 8-byte alignment</span>
+<span class="sd">      [M bytes] concatenated binary buffers (each 8-byte aligned)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">window_generator</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">window_generator</span><span class="p">(</span><span class="n">client_id</span><span class="p">)</span>
     <span class="n">zstd</span> <span class="o">=</span> <span class="n">zstandard</span><span class="o">.</span><span class="n">ZstdCompressor</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
     <span class="k">while</span> <span class="ow">not</span> <span class="n">buffer</span><span class="o">.</span><span class="n">done</span><span class="p">:</span>
@@ -1178,27 +1261,26 @@
         <span class="k">except</span> <span class="ne">StopAsyncIteration</span><span class="p">:</span>
             <span class="k">break</span>
 
-        <span class="k">if</span> <span class="n">client_api_version</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
-            <span class="c1"># Encode the message structure.</span>
-            <span class="n">inner</span> <span class="o">=</span> <span class="n">msgspec</span><span class="o">.</span><span class="n">msgpack</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">(</span>
-                        <span class="n">message</span><span class="o">.</span><span class="n">as_serializable_dict</span><span class="p">()</span> <span class="k">for</span> <span class="n">message</span> <span class="ow">in</span> <span class="n">outgoing</span>
-                    <span class="p">),</span>
-                    <span class="s2">&quot;timestampSec&quot;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">(),</span>
-                <span class="p">}</span>
-            <span class="p">)</span>
-            <span class="c1"># Compress and prepend size header (8 bytes, little-endian uint64).</span>
-            <span class="n">compressed</span> <span class="o">=</span> <span class="n">zstd</span><span class="o">.</span><span class="n">compress</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span>
-            <span class="n">serialized</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;little&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">compressed</span>
-            <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">serialized</span><span class="p">)</span>
-        <span class="k">elif</span> <span class="n">client_api_version</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-            <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">outgoing</span><span class="p">:</span>
-                <span class="n">serialized</span> <span class="o">=</span> <span class="n">msgspec</span><span class="o">.</span><span class="n">msgpack</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">as_serializable_dict</span><span class="p">())</span>
-                <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">serialized</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">)</span>
-                <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">serialized</span><span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">assert_never</span><span class="p">(</span><span class="n">client_api_version</span><span class="p">)</span>
+        <span class="n">binary_buffers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">memoryview</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">serialized_messages</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span>
+            <span class="n">message</span><span class="o">.</span><span class="n">as_serializable_dict</span><span class="p">(</span><span class="n">binary_buffers</span><span class="p">)</span> <span class="k">for</span> <span class="n">message</span> <span class="ow">in</span> <span class="n">outgoing</span>
+        <span class="p">)</span>
+        <span class="n">inner</span> <span class="o">=</span> <span class="n">msgspec</span><span class="o">.</span><span class="n">msgpack</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
+            <span class="p">{</span>
+                <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="n">serialized_messages</span><span class="p">,</span>
+                <span class="s2">&quot;timestampSec&quot;</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">(),</span>
+                <span class="s2">&quot;binaryBufferLengths&quot;</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">b</span><span class="o">.</span><span class="n">nbytes</span> <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="n">binary_buffers</span><span class="p">),</span>
+            <span class="p">}</span>
+        <span class="p">)</span>
+        <span class="n">compressed</span> <span class="o">=</span> <span class="n">zstd</span><span class="o">.</span><span class="n">compress</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span>
+
+        <span class="n">parts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bytes</span> <span class="o">|</span> <span class="nb">memoryview</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="nb">len</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;little&quot;</span><span class="p">),</span>
+            <span class="nb">len</span><span class="p">(</span><span class="n">compressed</span><span class="p">)</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;little&quot;</span><span class="p">),</span>
+            <span class="n">compressed</span><span class="p">,</span>
+        <span class="p">]</span>
+        <span class="n">_append_aligned_buffers</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="n">binary_buffers</span><span class="p">,</span> <span class="mi">16</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">compressed</span><span class="p">))</span>
+        <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">))</span>
 
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_message_consumer</span><span class="p">(</span>
