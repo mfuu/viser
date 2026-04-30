@@ -63,9 +63,9 @@ export interface BatchedAxesMessage {
   type: "BatchedAxesMessage";
   name: string;
   props: {
-    batched_wxyzs: Uint8Array<ArrayBuffer>;
-    batched_positions: Uint8Array<ArrayBuffer>;
-    batched_scales: Uint8Array<ArrayBuffer> | null;
+    batched_wxyzs: Float32Array;
+    batched_positions: Float32Array;
+    batched_scales: Float32Array | null;
     axes_length: number;
     axes_radius: number;
     scale: number | [number, number, number];
@@ -145,12 +145,13 @@ export interface PointCloudMessage {
   type: "PointCloudMessage";
   name: string;
   props: {
-    points: Uint8Array<ArrayBuffer>;
+    points: Uint16Array | Float32Array;
     colors: Uint8Array<ArrayBuffer>;
     point_size: number;
     point_shape: "square" | "diamond" | "circle" | "rounded" | "sparkle";
     precision: "float16" | "float32";
     scale: number | [number, number, number];
+    point_shading: "flat" | "gradient";
   };
 }
 /** Directional light message.
@@ -245,8 +246,8 @@ export interface MeshMessage {
   type: "MeshMessage";
   name: string;
   props: {
-    vertices: Uint8Array<ArrayBuffer>;
-    faces: Uint8Array<ArrayBuffer>;
+    vertices: Float32Array;
+    faces: Uint32Array;
     color: [number, number, number];
     wireframe: boolean;
     opacity: number | null;
@@ -329,8 +330,8 @@ export interface SkinnedMeshMessage {
   type: "SkinnedMeshMessage";
   name: string;
   props: {
-    vertices: Uint8Array<ArrayBuffer>;
-    faces: Uint8Array<ArrayBuffer>;
+    vertices: Float32Array;
+    faces: Uint32Array;
     color: [number, number, number];
     wireframe: boolean;
     opacity: number | null;
@@ -340,10 +341,10 @@ export interface SkinnedMeshMessage {
     scale: number | [number, number, number];
     cast_shadow: boolean;
     receive_shadow: boolean | number;
-    bone_wxyzs: Uint8Array<ArrayBuffer>;
-    bone_positions: Uint8Array<ArrayBuffer>;
-    skin_indices: Uint8Array<ArrayBuffer>;
-    skin_weights: Uint8Array<ArrayBuffer>;
+    bone_wxyzs: Float32Array;
+    bone_positions: Float32Array;
+    skin_indices: Uint16Array;
+    skin_weights: Float32Array;
   };
 }
 /** Message from server->client carrying batched meshes information.
@@ -354,12 +355,12 @@ export interface BatchedMeshesMessage {
   type: "BatchedMeshesMessage";
   name: string;
   props: {
-    batched_wxyzs: Uint8Array<ArrayBuffer>;
-    batched_positions: Uint8Array<ArrayBuffer>;
-    batched_scales: Uint8Array<ArrayBuffer> | null;
+    batched_wxyzs: Float32Array;
+    batched_positions: Float32Array;
+    batched_scales: Float32Array | null;
     lod: "auto" | "off" | [number, number][];
-    vertices: Uint8Array<ArrayBuffer>;
-    faces: Uint8Array<ArrayBuffer>;
+    vertices: Float32Array;
+    faces: Uint32Array;
     batched_colors: Uint8Array<ArrayBuffer>;
     wireframe: boolean;
     opacity: number | null;
@@ -368,7 +369,7 @@ export interface BatchedMeshesMessage {
     material: "standard" | "toon3" | "toon5";
     cast_shadow: boolean;
     receive_shadow: boolean;
-    batched_opacities: Uint8Array<ArrayBuffer> | null;
+    batched_opacities: Float32Array | null;
     scale: number | [number, number, number];
   };
 }
@@ -380,9 +381,9 @@ export interface BatchedGlbMessage {
   type: "BatchedGlbMessage";
   name: string;
   props: {
-    batched_wxyzs: Uint8Array<ArrayBuffer>;
-    batched_positions: Uint8Array<ArrayBuffer>;
-    batched_scales: Uint8Array<ArrayBuffer> | null;
+    batched_wxyzs: Float32Array;
+    batched_positions: Float32Array;
+    batched_scales: Float32Array | null;
     lod: "auto" | "off" | [number, number][];
     glb_data: Uint8Array<ArrayBuffer>;
     cast_shadow: boolean;
@@ -436,9 +437,26 @@ export interface LineSegmentsMessage {
   type: "LineSegmentsMessage";
   name: string;
   props: {
-    points: Uint8Array<ArrayBuffer>;
+    points: Float32Array;
     line_width: number;
     colors: Uint8Array<ArrayBuffer>;
+    scale: number | [number, number, number];
+  };
+}
+/** Message from server->client carrying arrow information.
+ *
+ * (automatically generated)
+ */
+export interface ArrowMessage {
+  type: "ArrowMessage";
+  name: string;
+  props: {
+    points: Float32Array;
+    colors: Uint8Array<ArrayBuffer>;
+    shaft_radius: number;
+    head_radius: number;
+    head_length: number;
+    line_width: number;
     scale: number | [number, number, number];
   };
 }
@@ -450,7 +468,7 @@ export interface CatmullRomSplineMessage {
   type: "CatmullRomSplineMessage";
   name: string;
   props: {
-    points: Uint8Array<ArrayBuffer>;
+    points: Float32Array;
     curve_type: "centripetal" | "chordal" | "catmullrom";
     tension: number;
     closed: boolean;
@@ -468,8 +486,8 @@ export interface CubicBezierSplineMessage {
   type: "CubicBezierSplineMessage";
   name: string;
   props: {
-    points: Uint8Array<ArrayBuffer>;
-    control_points: Uint8Array<ArrayBuffer>;
+    points: Float32Array;
+    control_points: Float32Array;
     line_width: number;
     color: [number, number, number];
     segments: number | null;
@@ -483,10 +501,7 @@ export interface CubicBezierSplineMessage {
 export interface GaussianSplatsMessage {
   type: "GaussianSplatsMessage";
   name: string;
-  props: {
-    buffer: Uint8Array<ArrayBuffer>;
-    scale: number | [number, number, number];
-  };
+  props: { buffer: Uint32Array; scale: number | [number, number, number] };
 }
 /** Remove a particular node from the scene.
  *
@@ -506,7 +521,26 @@ export interface GuiFolderMessage {
   container_uuid: string;
   props: {
     order: number;
-    label: string;
+    label: string | null;
+    visible: boolean;
+    expand_by_default: boolean;
+  };
+}
+/** A form is a folder whose children's values can be committed together.
+ *
+ * Reuses ``GuiFolderProps`` because the visual shape is identical to a
+ * folder; the form-specific behavior (``on_submit`` callbacks, dirty
+ * indicator, Cmd/Ctrl+Enter) is keyed off the message type alone.
+ *
+ * (automatically generated)
+ */
+export interface GuiFormMessage {
+  type: "GuiFormMessage";
+  uuid: string;
+  container_uuid: string;
+  props: {
+    order: number;
+    label: string | null;
     visible: boolean;
     expand_by_default: boolean;
   };
@@ -530,6 +564,16 @@ export interface GuiHtmlMessage {
   uuid: string;
   container_uuid: string;
   props: { order: number; content: string; visible: boolean };
+}
+/** GuiDividerMessage(uuid: 'str', container_uuid: 'str', props: 'GuiDividerProps')
+ *
+ * (automatically generated)
+ */
+export interface GuiDividerMessage {
+  type: "GuiDividerMessage";
+  uuid: string;
+  container_uuid: string;
+  props: { order: number; visible: boolean };
 }
 /** GuiProgressBarMessage(uuid: 'str', value: 'float', container_uuid: 'str', props: 'GuiProgressBarProps')
  *
@@ -588,7 +632,7 @@ export interface GuiUplotMessage {
   container_uuid: string;
   props: {
     order: number;
-    data: Uint8Array<ArrayBuffer>[];
+    data: Float64Array[];
     mode: 1 | 2 | null;
     title: string | null;
     series: {
@@ -767,6 +811,8 @@ export interface GuiUplotMessage {
     } | null;
     focus: { alpha: number } | null;
     aspect: number;
+    height: number | null;
+    padding: [number, number, number, number] | null;
     visible: boolean;
   };
 }
@@ -1105,13 +1151,47 @@ export interface RunJavascriptMessage {
   type: "RunJavascriptMessage";
   source: string;
 }
-/** Notification message.
+/** Server -> client message to show a new notification.
  *
  * (automatically generated)
  */
-export interface NotificationMessage {
-  type: "NotificationMessage";
-  mode: "show" | "update";
+export interface NotificationShowMessage {
+  type: "NotificationShowMessage";
+  uuid: string;
+  props: {
+    title: string;
+    body: string;
+    loading: boolean;
+    with_close_button: boolean;
+    auto_close_seconds: number | null;
+    color:
+      | "dark"
+      | "gray"
+      | "red"
+      | "pink"
+      | "grape"
+      | "violet"
+      | "indigo"
+      | "blue"
+      | "cyan"
+      | "green"
+      | "lime"
+      | "yellow"
+      | "orange"
+      | "teal"
+      | [number, number, number]
+      | null;
+  };
+}
+/** Server -> client message to update an existing notification.
+ *
+ * Carries the full ``NotificationProps`` so the client shares a construction
+ * path with ``NotificationShowMessage``.
+ *
+ * (automatically generated)
+ */
+export interface NotificationUpdateMessage {
+  type: "NotificationUpdateMessage";
   uuid: string;
   props: {
     title: string;
@@ -1389,6 +1469,21 @@ export interface SetSceneNodeClickableMessage {
   name: string;
   clickable: boolean;
 }
+/** Declare the drag-input combinations a scene node listens for.
+ *
+ * Sent as a full set; empty ``bindings`` means the node is not draggable.
+ *
+ *
+ * (automatically generated)
+ */
+export interface SetSceneNodeDragBindingsMessage {
+  type: "SetSceneNodeDragBindingsMessage";
+  name: string;
+  bindings: {
+    button: "left" | "middle" | "right" | "any";
+    modifiers: ("cmd/ctrl" | "alt" | "shift")[] | null;
+  }[];
+}
 /** Message for clicked objects.
  *
  * (automatically generated)
@@ -1401,12 +1496,64 @@ export interface SceneNodeClickMessage {
   ray_direction: [number, number, number];
   screen_pos: [number, number];
 }
+/** Client -> server message for a scene-node drag (start/update/end).
+ *
+ * All position/screen fields are *live* — recomputed on every
+ * start/update/end. ``start_*`` tracks the original click point as it
+ * moves with the object (the grab point); ``end_*`` tracks the current
+ * pointer projected onto the camera-aligned drag plane.
+ *
+ * (automatically generated)
+ */
+export interface SceneNodeDragMessage {
+  type: "SceneNodeDragMessage";
+  phase: "start" | "update" | "end";
+  name: string;
+  instance_index: number | null;
+  start_position: [number, number, number];
+  start_screen_pos: [number, number];
+  end_position: [number, number, number];
+  end_screen_pos: [number, number];
+  button: "left" | "middle" | "right";
+  ctrl: boolean;
+  meta: boolean;
+  shift: boolean;
+  alt: boolean;
+}
 /** Reset GUI.
  *
  * (automatically generated)
  */
 export interface ResetGuiMessage {
   type: "ResetGuiMessage";
+}
+/** Bidirectional form submit signal.
+ *
+ * - Sent client->server when the user presses Cmd/Ctrl+Enter inside a form.
+ * The server fires the form's ``on_submit`` callbacks and broadcasts this
+ * message to all clients.
+ * - Sent server->client (broadcast) after any submit (client-initiated or
+ * via Python ``form.submit()``). Clients clear their dirty indicator on
+ * receipt.
+ *
+ * (automatically generated)
+ */
+export interface GuiFormSubmitMessage {
+  type: "GuiFormSubmitMessage";
+  uuid: string;
+}
+/** Bidirectional form dirty signal.
+ *
+ * - Sent client->server when any input inside the form first changes since
+ * the last submit. The server broadcasts this to all other clients.
+ * - Sent server->client (broadcast) to propagate dirty state. Clients show
+ * a dirty indicator on the form header on receipt.
+ *
+ * (automatically generated)
+ */
+export interface GuiFormDirtyMessage {
+  type: "GuiFormDirtyMessage";
+  uuid: string;
 }
 /** GuiModalMessage(order: 'float', uuid: 'str', title: 'str')
  *
@@ -1620,6 +1767,223 @@ export interface BrowserInfoMessage {
   screen_width: number | null;
   screen_height: number | null;
 }
+/** Message from server->client to register a command in the command palette.
+ *
+ * (automatically generated)
+ */
+export interface RegisterCommandMessage {
+  type: "RegisterCommandMessage";
+  uuid: string;
+  props: {
+    label: string;
+    description: string | null;
+    hotkey:
+      | "A"
+      | "B"
+      | "C"
+      | "D"
+      | "E"
+      | "F"
+      | "G"
+      | "H"
+      | "I"
+      | "J"
+      | "K"
+      | "L"
+      | "M"
+      | "N"
+      | "O"
+      | "P"
+      | "Q"
+      | "R"
+      | "S"
+      | "T"
+      | "U"
+      | "V"
+      | "W"
+      | "X"
+      | "Y"
+      | "Z"
+      | "0"
+      | "1"
+      | "2"
+      | "3"
+      | "4"
+      | "5"
+      | "6"
+      | "7"
+      | "8"
+      | "9"
+      | "space"
+      | "enter"
+      | "escape"
+      | "tab"
+      | "backspace"
+      | "delete"
+      | "insert"
+      | "home"
+      | "end"
+      | "pageup"
+      | "pagedown"
+      | "arrowup"
+      | "arrowdown"
+      | "arrowleft"
+      | "arrowright"
+      | "plus"
+      | "minus"
+      | "asterisk"
+      | "slash"
+      | [
+          "cmd/ctrl" | "ctrl" | "alt" | "shift",
+          (
+            | "A"
+            | "B"
+            | "C"
+            | "D"
+            | "E"
+            | "F"
+            | "G"
+            | "H"
+            | "I"
+            | "J"
+            | "K"
+            | "L"
+            | "M"
+            | "N"
+            | "O"
+            | "P"
+            | "Q"
+            | "R"
+            | "S"
+            | "T"
+            | "U"
+            | "V"
+            | "W"
+            | "X"
+            | "Y"
+            | "Z"
+            | "0"
+            | "1"
+            | "2"
+            | "3"
+            | "4"
+            | "5"
+            | "6"
+            | "7"
+            | "8"
+            | "9"
+            | "space"
+            | "enter"
+            | "escape"
+            | "tab"
+            | "backspace"
+            | "delete"
+            | "insert"
+            | "home"
+            | "end"
+            | "pageup"
+            | "pagedown"
+            | "arrowup"
+            | "arrowdown"
+            | "arrowleft"
+            | "arrowright"
+            | "plus"
+            | "minus"
+            | "asterisk"
+            | "slash"
+          ),
+        ]
+      | [
+          "cmd/ctrl" | "ctrl" | "alt" | "shift",
+          "cmd/ctrl" | "ctrl" | "alt" | "shift",
+          (
+            | "A"
+            | "B"
+            | "C"
+            | "D"
+            | "E"
+            | "F"
+            | "G"
+            | "H"
+            | "I"
+            | "J"
+            | "K"
+            | "L"
+            | "M"
+            | "N"
+            | "O"
+            | "P"
+            | "Q"
+            | "R"
+            | "S"
+            | "T"
+            | "U"
+            | "V"
+            | "W"
+            | "X"
+            | "Y"
+            | "Z"
+            | "0"
+            | "1"
+            | "2"
+            | "3"
+            | "4"
+            | "5"
+            | "6"
+            | "7"
+            | "8"
+            | "9"
+            | "space"
+            | "enter"
+            | "escape"
+            | "tab"
+            | "backspace"
+            | "delete"
+            | "insert"
+            | "home"
+            | "end"
+            | "pageup"
+            | "pagedown"
+            | "arrowup"
+            | "arrowdown"
+            | "arrowleft"
+            | "arrowright"
+            | "plus"
+            | "minus"
+            | "asterisk"
+            | "slash"
+          ),
+        ]
+      | null;
+    _icon_html: string | null;
+    disabled: boolean;
+  };
+}
+/** Message from server->client to update properties of an existing command.
+ *
+ * (automatically generated)
+ */
+export interface CommandUpdateMessage {
+  type: "CommandUpdateMessage";
+  uuid: string;
+  updates: { [key: string]: any };
+}
+/** Message from server->client to remove a command from the command palette.
+ *
+ * (automatically generated)
+ */
+export interface RemoveCommandMessage {
+  type: "RemoveCommandMessage";
+  uuid: string;
+}
+/** Message from client->server when a command is triggered from the command palette.
+ *
+ * (automatically generated)
+ */
+export interface CommandTriggerMessage {
+  type: "CommandTriggerMessage";
+  uuid: string;
+}
 
 export type Message =
   | CameraFrustumMessage
@@ -1646,13 +2010,16 @@ export type Message =
   | TransformControlsMessage
   | ImageMessage
   | LineSegmentsMessage
+  | ArrowMessage
   | CatmullRomSplineMessage
   | CubicBezierSplineMessage
   | GaussianSplatsMessage
   | RemoveSceneNodeMessage
   | GuiFolderMessage
+  | GuiFormMessage
   | GuiMarkdownMessage
   | GuiHtmlMessage
+  | GuiDividerMessage
   | GuiProgressBarMessage
   | GuiPlotlyMessage
   | GuiUplotMessage
@@ -1673,7 +2040,8 @@ export type Message =
   | GuiButtonGroupMessage
   | GuiRemoveMessage
   | RunJavascriptMessage
-  | NotificationMessage
+  | NotificationShowMessage
+  | NotificationUpdateMessage
   | RemoveNotificationMessage
   | ViewerCameraMessage
   | ScenePointerMessage
@@ -1697,8 +2065,12 @@ export type Message =
   | BackgroundImageMessage
   | SetSceneNodeVisibilityMessage
   | SetSceneNodeClickableMessage
+  | SetSceneNodeDragBindingsMessage
   | SceneNodeClickMessage
+  | SceneNodeDragMessage
   | ResetGuiMessage
+  | GuiFormSubmitMessage
+  | GuiFormDirtyMessage
   | GuiModalMessage
   | GuiCloseModalMessage
   | GuiButtonHoldMessage
@@ -1715,7 +2087,11 @@ export type Message =
   | ShareUrlUpdated
   | ShareUrlDisconnect
   | SetGuiPanelLabelMessage
-  | BrowserInfoMessage;
+  | BrowserInfoMessage
+  | RegisterCommandMessage
+  | CommandUpdateMessage
+  | RemoveCommandMessage
+  | CommandTriggerMessage;
 export type SceneNodeMessage =
   | CameraFrustumMessage
   | GlbMessage
@@ -1741,13 +2117,16 @@ export type SceneNodeMessage =
   | TransformControlsMessage
   | ImageMessage
   | LineSegmentsMessage
+  | ArrowMessage
   | CatmullRomSplineMessage
   | CubicBezierSplineMessage
   | GaussianSplatsMessage;
 export type GuiComponentMessage =
   | GuiFolderMessage
+  | GuiFormMessage
   | GuiMarkdownMessage
   | GuiHtmlMessage
+  | GuiDividerMessage
   | GuiProgressBarMessage
   | GuiPlotlyMessage
   | GuiUplotMessage
@@ -1791,6 +2170,7 @@ const typeSetSceneNodeMessage = new Set([
   "TransformControlsMessage",
   "ImageMessage",
   "LineSegmentsMessage",
+  "ArrowMessage",
   "CatmullRomSplineMessage",
   "CubicBezierSplineMessage",
   "GaussianSplatsMessage",
@@ -1802,8 +2182,10 @@ export function isSceneNodeMessage(
 }
 const typeSetGuiComponentMessage = new Set([
   "GuiFolderMessage",
+  "GuiFormMessage",
   "GuiMarkdownMessage",
   "GuiHtmlMessage",
+  "GuiDividerMessage",
   "GuiProgressBarMessage",
   "GuiPlotlyMessage",
   "GuiUplotMessage",

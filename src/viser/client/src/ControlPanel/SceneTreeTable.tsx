@@ -40,7 +40,7 @@ function EditNodeProps({
   closePopoverFn: () => void;
 }) {
   const viewer = React.useContext(ViewerContext)!;
-  const nodeMessage = viewer.useSceneTree((state) => state[nodeName]?.message);
+  const nodeMessage = viewer.useSceneTree(nodeName, (node) => node?.message);
   const updateSceneNode = viewer.sceneTreeActions.updateSceneNodeProps;
 
   if (nodeMessage === undefined) {
@@ -67,7 +67,7 @@ function EditNodeProps({
   const props = nodeMessage.props;
   const initialValues = Object.fromEntries(
     Object.entries(props)
-      .filter(([, value]) => !(value instanceof Uint8Array))
+      .filter(([, value]) => !ArrayBuffer.isView(value))
       .map(([key, value]) => [key, stringify(value)]),
   );
 
@@ -161,12 +161,37 @@ function EditNodeProps({
           style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}
         >
           {Object.entries(props).map(([key, value]) => {
-            if (value instanceof Uint8Array) {
-              return null;
-            }
             // Skip properties that start with "_".
             if (key.startsWith("_")) {
               return null;
+            }
+
+            const label =
+              key.charAt(0).toUpperCase() + key.slice(1).split("_").join(" ");
+
+            // Show typed arrays as read-only type + length.
+            if (ArrayBuffer.isView(value)) {
+              return (
+                <Flex key={key} align="center">
+                  <Box style={{ flexGrow: "1" }} fz="xs">
+                    {label}
+                  </Box>
+                  <Flex gap="xs" style={{ width: "9em", flexShrink: 0 }}>
+                    <TextInput
+                      size="xs"
+                      disabled
+                      styles={{
+                        input: {
+                          height: "1.625rem",
+                          minHeight: "1.625rem",
+                          width: "100%",
+                        },
+                      }}
+                      value={`${value.constructor.name}[${(value as ArrayBufferView & { length: number }).length}]`}
+                    />
+                  </Flex>
+                </Flex>
+              );
             }
 
             const isDirty = form.values[key] !== initialValues[key];
@@ -174,10 +199,9 @@ function EditNodeProps({
             return (
               <Flex key={key} align="center">
                 <Box style={{ flexGrow: "1" }} fz="xs">
-                  {key.charAt(0).toUpperCase() +
-                    key.slice(1).split("_").join(" ")}
+                  {label}
                 </Box>
-                <Flex gap="xs" style={{ width: "9em" }}>
+                <Flex gap="xs" style={{ width: "9em", flexShrink: 0 }}>
                   {(() => {
                     // Check if this is a color property
                     try {
@@ -295,7 +319,8 @@ function EditNodeProps({
 export default function SceneTreeTable() {
   const viewer = React.useContext(ViewerContext)!;
   const childrenName = viewer.useSceneTree(
-    (state) => state[""]!.children,
+    "",
+    (node) => node!.children,
     shallowArrayEqual,
   );
   return (
@@ -409,7 +434,8 @@ const SceneTreeTableRow = React.memo(function SceneTreeTableRow(props: {
   };
 
   const childrenName = viewer.useSceneTree(
-    (state) => state[props.nodeName]?.children,
+    props.nodeName,
+    (node) => node?.children,
     shallowArrayEqual,
   );
   const expandable = (childrenName?.length ?? 0) > 0;
@@ -425,9 +451,10 @@ const SceneTreeTableRow = React.memo(function SceneTreeTableRow(props: {
   // Get server visibility and override visibility separately
   // These use default equality (===) which is fine for boolean/undefined
   const serverVisibility =
-    viewer.useSceneTree((state) => state[props.nodeName]?.visibility) ?? true;
+    viewer.useSceneTree(props.nodeName, (node) => node?.visibility) ?? true;
   const overrideVisibility = viewer.useSceneTree(
-    (state) => state[props.nodeName]?.overrideVisibility,
+    props.nodeName,
+    (node) => node?.overrideVisibility,
   );
 
   // Compute final visibility: override takes precedence, fallback to server
@@ -436,9 +463,8 @@ const SceneTreeTableRow = React.memo(function SceneTreeTableRow(props: {
 
   // Get effective visibility (includes parent chain visibility)
   const isVisibleEffective =
-    viewer.useSceneTree(
-      (state) => state[props.nodeName]?.effectiveVisibility,
-    ) ?? false;
+    viewer.useSceneTree(props.nodeName, (node) => node?.effectiveVisibility) ??
+    false;
 
   // Ensure label visibility is cleaned up when component unmounts
   React.useEffect(() => {

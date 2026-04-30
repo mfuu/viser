@@ -24,7 +24,7 @@ import websockets.asyncio.server
 import websockets.datastructures
 import websockets.exceptions
 import zstandard
-from typing_extensions import Literal, assert_never, override
+from typing_extensions import override
 from websockets import Headers
 from websockets.asyncio.server import ServerConnection
 from websockets.http11 import Request, Response
@@ -58,6 +58,7 @@ class StateSerializer:
         self._handler = handler
         self._filter = filter
         self._time: float = 0.0
+        self._binary_buffers: list[memoryview] = []
         self._messages: list[tuple[float, dict[str, Any]]] = []
 
     def _insert_message(self, message: Message) -> None:
@@ -67,7 +68,9 @@ class StateSerializer:
         # GUI messages.
         if not self._filter(message):
             return
-        self._messages.append((self._time, message.as_serializable_dict()))
+        self._messages.append(
+            (self._time, message.as_serializable_dict(self._binary_buffers))
+        )
 
     def insert_sleep(self, duration: float) -> None:
         """Insert a sleep into the recorded file. This can be useful for
@@ -85,34 +88,45 @@ class StateSerializer:
         """
         assert self in self._handler._record_handles, "serialize() was already called!"
 
-        packed_bytes = msgspec.msgpack.encode(
+        # Same hybrid format as the live wire path: msgpack metadata with
+        # tagged placeholders for binary arrays, followed by raw aligned
+        # binary data.
+        msgpack_payload = msgspec.msgpack.encode(
             {
                 "durationSeconds": self._time,
                 "messages": self._messages,
                 "viserVersion": viser.__version__,
+                "binaryBufferLengths": tuple(b.nbytes for b in self._binary_buffers),
             }
         )
-        assert isinstance(packed_bytes, bytes)
+        assert isinstance(msgpack_payload, bytes)
         self._handler._record_handles.remove(self)
-        # Use zstd for better compression ratio and speed.
-        # Prepend 8-byte size header for decompressor.
-        compressed = zstandard.ZstdCompressor(level=12).compress(packed_bytes)
-        return len(packed_bytes).to_bytes(8, "little") + compressed
 
-    def show(self, height: int = 400, dark_mode: bool = False) -> None:
-        """Display the serialized scene in a Jupyter notebook or web browser.
+        # Build uncompressed inner payload:
+        #   [8 bytes] msgpack length (little-endian uint64)
+        #   [N bytes] msgpack payload
+        #   [P bytes] padding + aligned binary buffers...
+        msgpack_len_header = len(msgpack_payload).to_bytes(8, "little")
+        parts: list[bytes | memoryview] = [msgpack_len_header, msgpack_payload]
+        _append_aligned_buffers(parts, self._binary_buffers, 8 + len(msgpack_payload))
+        inner = b"".join(parts)
 
-        In Jupyter notebooks/labs, displays an inline IFrame. When running as a
-        script, opens the visualization in the default web browser.
+        # Compress everything together. Recordings aren't latency-sensitive.
+        compressed = zstandard.ZstdCompressor(level=12).compress(inner)
+        return len(inner).to_bytes(8, "little") + compressed
 
-        See also :meth:`viser.ViserServer.show`.
+    def as_html(self, dark_mode: bool = False) -> str:
+        """Get a standalone HTML string for the serialized scene.
+
+        Returns a self-contained HTML document that can be saved to a file
+        or embedded in other contexts.
 
         Args:
-            height: Height of the embedded viewer in pixels.
             dark_mode: Use dark color scheme.
-        """
-        import html as html_module
 
+        Returns:
+            A complete HTML document as a string.
+        """
         scene_bytes = self.serialize()
         scene_b64 = base64.b64encode(scene_bytes).decode("ascii")
 
@@ -129,7 +143,24 @@ class StateSerializer:
             f"window.__VISER_EMBED_CONFIG__={{darkMode:{dark_mode_str}}};"
             f"</script>"
         )
-        modified_html = client_html.replace("</head>", f"{inject_script}</head>")
+        head_end = client_html.index("</head>")
+        return client_html[:head_end] + inject_script + client_html[head_end:]
+
+    def show(self, height: int = 400, dark_mode: bool = False) -> None:
+        """Display the serialized scene in a Jupyter notebook or web browser.
+
+        In Jupyter notebooks/labs, displays an inline IFrame. When running as a
+        script, opens the visualization in the default web browser.
+
+        See also :meth:`viser.ViserServer.show`.
+
+        Args:
+            height: Height of the embedded viewer in pixels.
+            dark_mode: Use dark color scheme.
+        """
+        import html as html_module
+
+        modified_html = self.as_html(dark_mode=dark_mode)
 
         # Display in IPython (Jupyter, Colab, myst-nb, etc.) using srcdoc.
         # This embeds the entire HTML inline, avoiding file serving issues.
@@ -288,8 +319,6 @@ class WebsockServer(WebsockMessageHandler):
             required in the future.
         http_server_root: Path to root for HTTP server.
         verbose: Toggle for print messages.
-        client_api_version: Flag for backwards compatibility. 0 sends individual
-            messages. 1 sends windowed messages.
     """
 
     def __init__(
@@ -299,7 +328,6 @@ class WebsockServer(WebsockMessageHandler):
         message_class: type[Message] = Message,
         http_server_root: Path | None = None,
         verbose: bool = True,
-        client_api_version: Literal[0, 1] = 0,
     ):
         super().__init__()
 
@@ -316,7 +344,6 @@ class WebsockServer(WebsockMessageHandler):
         self._message_class = message_class
         self._http_server_root = http_server_root
         self._verbose = verbose
-        self._client_api_version: Literal[0, 1] = client_api_version
         self._background_event_loop: asyncio.AbstractEventLoop | None = None
 
         self._stop_event: asyncio.Event | None = None
@@ -367,7 +394,7 @@ class WebsockServer(WebsockMessageHandler):
         # Clean up the message buffers. This isn't really necessary, but helps
         # avoid "task destroyed" errors.
         self._broadcast_buffer.set_done()
-        for client in self._client_state_from_id.values():
+        for client in list(self._client_state_from_id.values()):
             client.message_buffer.set_done()
 
         # Wait for the server thread to finish.
@@ -437,25 +464,24 @@ class WebsockServer(WebsockMessageHandler):
                 total_connections += 1
 
             # Version check to make sure Viser server/client match.
-            if self._client_api_version == 1:
-                import viser
+            import viser
 
-                # Extract client version from the selected subprotocol.
-                client_version_str = "unknown"
-                if connection.subprotocol is not None:
-                    if connection.subprotocol.startswith("viser-v"):
-                        client_version_str = connection.subprotocol[7:].strip()
+            # Extract client version from the selected subprotocol.
+            client_version_str = "unknown"
+            if connection.subprotocol is not None:
+                if connection.subprotocol.startswith("viser-v"):
+                    client_version_str = connection.subprotocol[7:].strip()
 
-                if client_version_str != viser.__version__:
-                    rich.print(
-                        f"[bold red](viser)[/bold red] Version mismatch - connection rejected. "
-                        f"Client: '{client_version_str}', Server: '{viser.__version__}'"
-                    )
-                    await connection.close(
-                        1002,
-                        f"Version mismatch. Client: {client_version_str}, Server: {viser.__version__}",
-                    )
-                    return  # Exit handler to prevent further processing.
+            if client_version_str != viser.__version__:
+                rich.print(
+                    f"[bold red](viser)[/bold red] Version mismatch - connection rejected. "
+                    f"Client: '{client_version_str}', Server: '{viser.__version__}'"
+                )
+                await connection.close(
+                    1002,
+                    f"Version mismatch. Client: {client_version_str}, Server: {viser.__version__}",
+                )
+                return  # Exit handler to prevent further processing.
 
             client_state = _ClientHandleState(
                 AsyncMessageBuffer(event_loop, persistent_messages=False),
@@ -495,13 +521,11 @@ class WebsockServer(WebsockMessageHandler):
                         connection,
                         client_state.message_buffer,
                         client_id,
-                        self._client_api_version,
                     ),
                     _message_producer(
                         connection,
                         self._broadcast_buffer,
                         client_id,
-                        self._client_api_version,
                     ),
                     _message_consumer(connection, handle_incoming, message_class),
                 )
@@ -574,6 +598,20 @@ class WebsockServer(WebsockMessageHandler):
                 relpath = "index.html"
             assert http_server_root is not None
 
+            # Reject path traversal by checking the URL parts, not
+            # by comparing resolved paths. Under Bazel/uv runfile
+            # trees, http_server_root and the files inside it can
+            # pass through independent symlinks (e.g. uv hardlinks
+            # individual files from a shared cache), so Path.resolve()
+            # places a legitimate child outside the resolved root.
+            #
+            # Skipping the resolved-path check means we no longer
+            # validate that symlinks inside http_server_root stay
+            # within it. That is fine here: http_server_root is set
+            # by the application, not by user input, so the only
+            # attacker-controlled component is the URL path.
+            if ".." in Path(relpath).parts:
+                return Response(http.HTTPStatus.NOT_FOUND, "NOT FOUND", Headers())
             source_path = http_server_root / relpath
             if not source_path.exists():
                 return Response(http.HTTPStatus.NOT_FOUND, "NOT FOUND", Headers())
@@ -678,13 +716,51 @@ class WebsockServer(WebsockMessageHandler):
         event_loop.close()
 
 
+# Pre-allocated padding bytes for 8-byte alignment.
+_ALIGNMENT_PADDING = tuple(b"\x00" * i for i in range(8))
+
+
+def _append_aligned_buffers(
+    parts: list[bytes | memoryview],
+    binary_buffers: list[memoryview],
+    current_offset: int,
+) -> None:
+    """Append binary buffers to `parts` with 8-byte alignment padding."""
+    for buf in binary_buffers:
+        padding = (8 - (current_offset % 8)) % 8
+        if padding:
+            parts.append(_ALIGNMENT_PADDING[padding])
+            current_offset += padding
+        parts.append(buf)
+        current_offset += buf.nbytes
+
+
 async def _message_producer(
     websocket: ServerConnection,
     buffer: AsyncMessageBuffer,
     client_id: int,
-    client_api_version: Literal[0, 1],
 ) -> None:
-    """Infinite loop to broadcast windows of messages from a buffer."""
+    """Infinite loop to broadcast windows of messages from a buffer.
+
+    Wire format (hybrid zstd-compressed msgpack + raw binary buffers):
+    - Binary arrays (numpy) are extracted from messages and replaced with
+      tagged placeholder dicts so msgpack.encode() doesn't walk large arrays.
+    - Raw binary data is appended uncompressed after the zstd-compressed
+      msgpack, with 8-byte alignment padding.
+    - On the JS side, typed array views (Float32Array, etc.) are created
+      directly into the WebSocket's ArrayBuffer -- zero-copy for binary data.
+
+    Binary data is left uncompressed because float/int arrays (point clouds,
+    meshes) compress poorly, and at 30-60fps the zstd compress+decompress
+    cost adds up. Zero-copy is more valuable than modest compression.
+
+    Layout:
+      [8 bytes] decompressed size of msgpack (little-endian uint64)
+      [8 bytes] compressed size of msgpack (little-endian uint64)
+      [N bytes] zstd-compressed msgpack payload
+      [P bytes] padding to 8-byte alignment
+      [M bytes] concatenated binary buffers (each 8-byte aligned)
+    """
     window_generator = buffer.window_generator(client_id)
     zstd = zstandard.ZstdCompressor(level=1)
     while not buffer.done:
@@ -693,27 +769,26 @@ async def _message_producer(
         except StopAsyncIteration:
             break
 
-        if client_api_version == 1:
-            # Encode the message structure.
-            inner = msgspec.msgpack.encode(
-                {
-                    "messages": tuple(
-                        message.as_serializable_dict() for message in outgoing
-                    ),
-                    "timestampSec": time.perf_counter(),
-                }
-            )
-            # Compress and prepend size header (8 bytes, little-endian uint64).
-            compressed = zstd.compress(inner)
-            serialized = len(inner).to_bytes(8, "little") + compressed
-            await websocket.send(serialized)
-        elif client_api_version == 0:
-            for msg in outgoing:
-                serialized = msgspec.msgpack.encode(msg.as_serializable_dict())
-                assert isinstance(serialized, bytes)
-                await websocket.send(serialized)
-        else:
-            assert_never(client_api_version)
+        binary_buffers: list[memoryview] = []
+        serialized_messages = tuple(
+            message.as_serializable_dict(binary_buffers) for message in outgoing
+        )
+        inner = msgspec.msgpack.encode(
+            {
+                "messages": serialized_messages,
+                "timestampSec": time.perf_counter(),
+                "binaryBufferLengths": tuple(b.nbytes for b in binary_buffers),
+            }
+        )
+        compressed = zstd.compress(inner)
+
+        parts: list[bytes | memoryview] = [
+            len(inner).to_bytes(8, "little"),
+            len(compressed).to_bytes(8, "little"),
+            compressed,
+        ]
+        _append_aligned_buffers(parts, binary_buffers, 16 + len(compressed))
+        await websocket.send(b"".join(parts))
 
 
 async def _message_consumer(

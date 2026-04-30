@@ -30,16 +30,9 @@ function PlotComponent({
   const theme = useMantineTheme();
   const { colorScheme } = useMantineColorScheme();
 
-  // Convert inputs to Float64Array once per update.
+  // Data arrives as Float64Array views. Use directly, zero copy.
   const [data, xMin, xMax] = useMemo(() => {
-    const convertedData = props.data.map((array: Uint8Array) => {
-      return new Float64Array(
-        array.buffer.slice(
-          array.byteOffset,
-          array.byteOffset + array.byteLength,
-        ),
-      );
-    });
+    const convertedData = props.data;
     let xMin = Infinity;
     let xMax = -Infinity;
     for (const val of convertedData[0]) {
@@ -103,7 +96,7 @@ function PlotComponent({
 
     return {
       width: containerWidth,
-      height: (containerWidth / props.aspect) as any,
+      height: (props.height ?? containerWidth / props.aspect) as any,
       title: props.title || undefined,
       mode: props.mode || undefined,
       series: (props.series as any) || [],
@@ -114,11 +107,13 @@ function PlotComponent({
       legend: (props.legend as any) || undefined,
       focus: props.focus || undefined,
       // Set tighter default padding [top, right, bottom, left].
-      padding: [0, 24, 0, 0] as [number, number, number, number],
+      padding: (props.padding ?? [0, 24, 0, 0]) as [number, number, number, number],
     };
   }, [
     containerWidth,
     props.aspect,
+    props.height,
+    props.padding,
     props.title,
     props.mode,
     props.series,

@@ -14,8 +14,10 @@ import { CSM, CSMParameters } from "./csm/CSM";
 // @ts-ignore
 import { CSMHelper } from "./csm/CSMHelper";
 
-interface CsmDirectionalLightProps
-  extends Omit<CSMParameters, "lightDirection" | "camera" | "parent"> {
+interface CsmDirectionalLightProps extends Omit<
+  CSMParameters,
+  "lightDirection" | "camera" | "parent"
+> {
   fade?: boolean;
   position?: Vector3Tuple; // Position of the light
   color?: number;
@@ -152,6 +154,8 @@ function ShadowCsmLight({
   debug = false,
 }: Omit<CsmDirectionalLightProps, "castShadow">) {
   const camera = useThree((three) => three.camera);
+  const gl = useThree((three) => three.gl);
+  const reversedDepth = gl.capabilities.reversedDepthBuffer;
 
   // Get the scene object from the three fiber context.
   // This is a hack, see: https://github.com/pmndrs/react-three-fiber/issues/2725
@@ -193,6 +197,7 @@ function ShadowCsmLight({
       parent: scene,
       shadowBias,
       shadowMapSize,
+      reversedDepth,
     });
   }, [
     camera,

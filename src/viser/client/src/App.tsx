@@ -29,7 +29,12 @@ import { useDisclosure } from "@mantine/hooks";
 // Local imports.
 import { SynchronizedCameraControls } from "./CameraControls";
 import { SceneNodeThreeObject } from "./SceneTree";
+import { DragLayer } from "./DragLayer";
 import { shallowArrayEqual } from "./utils/shallowArrayEqual";
+import {
+  ndcFromPointerXy,
+  opencvXyFromPointerXy,
+} from "./utils/pointerCoords";
 import { ViewerContext, ViewerContextContents } from "./ViewerContext";
 import ControlPanel from "./ControlPanel/ControlPanel";
 import { useGuiState } from "./ControlPanel/GuiState";
@@ -37,6 +42,7 @@ import { searchParamKey } from "./SearchParamsUtils";
 import { WebsocketMessageProducer } from "./WebsocketInterface";
 import { Titlebar } from "./Titlebar";
 import { ViserModal } from "./Modal";
+import { CommandPalette } from "./CommandPalette";
 import { useSceneTreeState } from "./SceneTreeState";
 import { useEnvironmentState } from "./EnvironmentState";
 import { useDevSettingsStore } from "./DevSettingsStore";
@@ -84,43 +90,6 @@ const hdriPresets: Record<string, string> = {
 };
 
 // ======= Utility functions =======
-
-/** Turn a click event into a normalized device coordinate (NDC) vector.
- * Normalizes click coordinates to be between -1 and 1, with (0, 0) being the center of the screen.
- *
- * Returns null if input is not valid.
- */
-function ndcFromPointerXy(
-  viewer: ViewerContextContents,
-  xy: [number, number],
-): THREE.Vector2 | null {
-  const mouseVector = new THREE.Vector2();
-  mouseVector.x =
-    2 * ((xy[0] + 0.5) / viewer.mutable.current.canvas!.clientWidth) - 1;
-  mouseVector.y =
-    1 - 2 * ((xy[1] + 0.5) / viewer.mutable.current.canvas!.clientHeight);
-  return mouseVector.x < 1 &&
-    mouseVector.x > -1 &&
-    mouseVector.y < 1 &&
-    mouseVector.y > -1
-    ? mouseVector
-    : null;
-}
-
-/** Turn a click event to normalized OpenCV coordinate (NDC) vector.
- * Normalizes click coordinates to be between (0, 0) as upper-left corner,
- * and (1, 1) as lower-right corner, with (0.5, 0.5) being the center of the screen.
- * Uses offsetX/Y, and clientWidth/Height to get the coordinates.
- */
-function opencvXyFromPointerXy(
-  viewer: ViewerContextContents,
-  xy: [number, number],
-): THREE.Vector2 {
-  const mouseVector = new THREE.Vector2();
-  mouseVector.x = (xy[0] + 0.5) / viewer.mutable.current.canvas!.clientWidth;
-  mouseVector.y = (xy[1] + 0.5) / viewer.mutable.current.canvas!.clientHeight;
-  return mouseVector;
-}
 
 /** Gets default WebSocket server URL based on current window location. */
 const getDefaultServerFromUrl = (): string => {
@@ -258,12 +227,18 @@ function ViewerRoot() {
     // Skinned mesh state.
     skinnedMeshState: {},
 
+    // Per-node pose data (non-reactive, read in useFrame).
+    nodePoseData: {},
+
     // Global hover state tracking.
     hoveredElementsCount: 0,
   });
 
   // Create the scene tree state and extract store and actions.
-  const sceneTreeState = useSceneTreeState(mutable.current.nodeRefFromName);
+  const sceneTreeState = useSceneTreeState(
+    mutable.current.nodeRefFromName,
+    mutable.current.nodePoseData,
+  );
 
   // Create the environment state and extract store and actions.
   const environmentState = useEnvironmentState();
@@ -301,21 +276,32 @@ function ViewerRoot() {
     }, []),
   );
 
+  // Create GUI state.
+  const guiState = useGuiState(initialServer);
+
+  // Apply dark mode setting if provided via URL or embed config.
+  const effectiveDarkMode = darkMode || embedConfig?.darkMode;
+  if (effectiveDarkMode) {
+    const currentTheme = guiState.store.get().theme;
+    if (!currentTheme.dark_mode) {
+      guiState.store.set({ theme: { ...currentTheme, dark_mode: true } });
+    }
+  }
+
   // Create the context value with hooks and single ref.
   const viewer: ViewerContextContents = {
     messageSource,
     useSceneTree: sceneTreeState.store,
     sceneTreeActions: sceneTreeState.actions,
     useEnvironment: environmentState,
-    useGui: useGuiState(initialServer),
+    useGui: guiState.store,
+    useGuiConfig: guiState.configStore,
+    guiActions: guiState.actions,
     useDevSettings: devSettingsStore,
-    useInitialCamera: initialCameraState,
+    useInitialCamera: initialCameraState.store,
+    initialCameraActions: initialCameraState.actions,
     mutable,
   };
-
-  // Apply dark mode setting if provided via URL or embed config.
-  const effectiveDarkMode = darkMode || embedConfig?.darkMode;
-  if (effectiveDarkMode) viewer.useGui.getState().theme.dark_mode = true;
 
   return (
     <ViewerContext.Provider value={viewer}>
@@ -383,9 +369,9 @@ function ViewerContents({ children }: { children: React.ReactNode }) {
       >
         {children}
         <ColorSchemeSetter darkMode={darkMode} />
-        <NotificationsPanel />
         <BrowserWarning />
         <ViserModal />
+        <CommandPalette />
         {/* App layout */}
         <Box
           style={{
@@ -406,6 +392,7 @@ function ViewerContents({ children }: { children: React.ReactNode }) {
               display: "flex",
             }}
           >
+            <NotificationsPanel />
             <Box
               style={(theme) => ({
                 backgroundColor: darkMode ? theme.colors.dark[9] : "#fff",
@@ -627,7 +614,9 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           <AdaptiveDpr />
           {children}
           <BatchedLabelManager>
-            <SceneNodeThreeObject name="" />
+            <DragLayer>
+              <SceneNodeThreeObject name="" />
+            </DragLayer>
           </BatchedLabelManager>
         </SplatRenderContext>
         <DefaultLights />
@@ -642,14 +631,14 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
       style={{ position: "relative", zIndex: 0, width: "100%", height: "100%" }}
     >
       <Canvas
-        gl={{ preserveDrawingBuffer: true, logarithmicDepthBuffer: true }}
+        gl={{ preserveDrawingBuffer: true, reversedDepthBuffer: true }}
         style={{ width: "100%", height: "100%" }}
         ref={(el) => (viewer.mutable.current.canvas = el)}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onContextMenu={handleContextMenu}
-        shadows
+        shadows="percentage"
         dpr={fixedDpr ?? undefined}
       >
         {!inView && <DisableRender />}
@@ -729,7 +718,8 @@ function DefaultLights() {
 
   // Get world rotation directly from scene tree state.
   const worldRotation = viewer.useSceneTree(
-    (state) => state[""]?.wxyz ?? [1, 0, 0, 0],
+    "",
+    (node) => node?.wxyz ?? [1, 0, 0, 0],
     shallowArrayEqual,
   );
 
@@ -854,7 +844,7 @@ function AdaptiveDpr() {
         return [min, max];
       }}
       onChange={({ factor, fps, refreshrate }) => {
-        const dpr = window.devicePixelRatio * (0.5 + 0.5 * factor);
+        const dpr = window.devicePixelRatio * (0.75 + 0.25 * factor);
         console.log(
           `[Performance] Setting DPR to ${dpr}; FPS=${fps}/${refreshrate}`,
         );
@@ -906,20 +896,14 @@ function BackgroundImage() {
   const shaders = useMemo(
     () => ({
       vert: `
-    #include <logdepthbuf_pars_vertex>
-    #ifdef USE_LOGDEPTHBUF
-    bool isPerspectiveMatrix( mat4 m ) { return m[ 2 ][ 3 ] == -1.0; }
-    #endif
     varying vec2 vUv;
     void main() {
       vUv = uv;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      #include <logdepthbuf_vertex>
     }
     `,
       frag: `
     #include <packing>
-    #include <logdepthbuf_pars_fragment>
     precision highp float;
     precision highp int;
 
@@ -948,13 +932,17 @@ function BackgroundImage() {
       float bufDepth;
       if(hasDepth){
         float depth = readDepth(depthMap, vUv);
-        #ifdef USE_LOGDEPTHBUF
-          bufDepth = log2(1.0 + depth) * logDepthBufFC * 0.5;
-        #else
-          bufDepth = viewZToPerspectiveDepth(-depth, cameraNear, cameraFar);
+        bufDepth = viewZToPerspectiveDepth(-depth, cameraNear, cameraFar);
+        #ifdef USE_REVERSED_DEPTH_BUFFER
+          bufDepth = 1.0 - bufDepth;
         #endif
       } else {
-        bufDepth = 1.0;
+        // Far plane: 1.0 for standard depth, 0.0 for reversed depth.
+        #ifdef USE_REVERSED_DEPTH_BUFFER
+          bufDepth = 0.0;
+        #else
+          bufDepth = 1.0;
+        #endif
       }
       gl_FragDepth = bufDepth;
     }
@@ -1029,17 +1017,36 @@ function SceneContextSetter() {
     (state) => state.camera as THREE.PerspectiveCamera,
   );
 
+  const gl = useThree((state) => state.gl);
+
   // Expose scene internals on window for E2E testing (Playwright).
   useEffect(() => {
     const w = window as any;
     w.__viserMutable = mutable.current;
-    w.__viserSceneTree = viewer.useSceneTree;
+    // Expose a shim for E2E tests.
+    w.__viserSceneTree = {
+      getState: () => viewer.useSceneTree.getAll(),
+      subscribe: (listener: () => void) => {
+        // Subscribe to all key changes -- for benchmarking purposes.
+        // This uses a polling approach via the store's internal mechanism.
+        const unsubs: (() => void)[] = [];
+        const state = viewer.useSceneTree.getAll();
+        for (const key of Object.keys(state)) {
+          unsubs.push(viewer.useSceneTree.subscribe(key, listener));
+        }
+        return () => unsubs.forEach((u) => u());
+      },
+    };
+    w.__viserTestpoints = {
+      rendererInfo: gl.info,
+    };
 
     return () => {
       delete w.__viserMutable;
       delete w.__viserSceneTree;
+      delete w.__viserTestpoints;
     };
-  }, [mutable, viewer.useSceneTree]);
+  }, [mutable, viewer.useSceneTree, gl]);
 
   return null;
 }

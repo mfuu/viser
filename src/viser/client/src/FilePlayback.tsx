@@ -1,6 +1,10 @@
 import * as msgpack from "@msgpack/msgpack";
 import { Message } from "./WebsocketMessages";
 import { ZSTDDecoder } from "zstddec";
+import {
+  replaceBinaryPlaceholders,
+  computeBinaryOffsets,
+} from "./BinaryMessageDecode";
 
 // Initialize zstd decoder at module load.
 const zstdDecoder = new ZSTDDecoder();
@@ -23,8 +27,45 @@ import {
   IconPlayerPlayFilled,
 } from "@tabler/icons-react";
 
-/** Download, decompress, and deserialize a file, which should be serialized
- * via msgpack and compressed via zstd. Also takes a hook for status updates. */
+/**
+ * Decompress and decode a hybrid-format payload.
+ *
+ * Decompressed layout:
+ *   [8 bytes] msgpack length (little-endian uint64)
+ *   [N bytes] msgpack payload (with binary placeholders)
+ *   [P bytes] padding + aligned binary buffers
+ *
+ * Binary placeholders are replaced with properly typed array views.
+ */
+function decodeHybridPayload<T>(decompressed: Uint8Array): T {
+  const buf = decompressed.buffer as ArrayBuffer;
+  const base = decompressed.byteOffset;
+
+  // Read msgpack length from inner header.
+  const msgpackLength = Number(
+    new DataView(buf, base, 8).getBigUint64(0, true),
+  );
+
+  // Decode msgpack.
+  const msgpackData = new Uint8Array(buf, base + 8, msgpackLength);
+  const data = msgpack.decode(msgpackData) as T & {
+    binaryBufferLengths?: number[];
+  };
+
+  // Replace binary placeholders with typed array views.
+  const bufferLengths = data.binaryBufferLengths;
+  if (bufferLengths && bufferLengths.length > 0) {
+    const binaryOffsets = computeBinaryOffsets(
+      bufferLengths,
+      base + 8 + msgpackLength,
+    );
+    replaceBinaryPlaceholders(data, buf, binaryOffsets, bufferLengths);
+  }
+
+  return data;
+}
+
+/** Download, decompress, and deserialize a .viser recording file. */
 async function deserializeZstdMsgpackFile<T>(
   fileUrl: string,
   setStatus: (status: { downloaded: number; total: number }) => void,
@@ -63,15 +104,14 @@ async function deserializeZstdMsgpackFile<T>(
   const decompressedSize = Number(view.getBigUint64(0, true));
   const compressedData = bytes.slice(8);
 
-  // Decompress with zstd. Progress bar already at 100% from download.
+  // Decompress and decode using shared hybrid format logic.
   await zstdReady;
   const decompressed = zstdDecoder.decode(compressedData, decompressedSize);
-
-  return msgpack.decode(decompressed) as T;
+  return decodeHybridPayload<T>(decompressed);
 }
 
-/** Deserialize embedded base64-encoded zstd-compressed msgpack data.
- * Used for static embedding where scene data is inlined in the HTML. */
+/** Deserialize embedded base64-encoded zstd-compressed data.
+ * Used for static embedding in HTML pages (e.g., myst-nb documentation). */
 async function deserializeEmbeddedData<T>(
   base64Data: string,
   setStatus: (status: { downloaded: number; total: number }) => void,
@@ -91,11 +131,10 @@ async function deserializeEmbeddedData<T>(
   const decompressedSize = Number(view.getBigUint64(0, true));
   const compressedData = bytes.slice(8);
 
-  // Decompress with zstd and decode msgpack.
+  // Decompress and decode using shared hybrid format logic.
   await zstdReady;
   const decompressed = zstdDecoder.decode(compressedData, decompressedSize);
-
-  return msgpack.decode(decompressed) as T;
+  return decodeHybridPayload<T>(decompressed);
 }
 
 export interface SerializedMessages {
@@ -117,11 +156,17 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
   // Instead of removing all of the existing scene nodes, we're just going to hide them.
   // This will prevent unnecessary remounting when messages are looped.
   function resetScene() {
-    const sceneTreeState = viewer.useSceneTree.getState();
+    const sceneTreeState = viewer.useSceneTree.getAll();
     Object.keys(sceneTreeState).forEach((key) => {
       if (key === "") return;
       const node = sceneTreeState[key];
       const nodeMessage = node?.message;
+      // Reset pose via mutable ref (no re-render).
+      viewer.mutable.current.nodePoseData[key] = {
+        wxyz: [1, 0, 0, 0],
+        position: [0, 0, 0],
+        poseUpdateState: "needsUpdate",
+      };
       if (
         nodeMessage !== undefined &&
         (nodeMessage.type !== "FrameMessage" || nodeMessage.props.show_axes)
@@ -131,14 +176,6 @@ export function PlaybackFromFile({ fileUrl }: { fileUrl: string }) {
         // will be no message to un-hide them.
         viewer.sceneTreeActions.updateNodeAttributes(key, {
           visibility: false,
-          wxyz: [1, 0, 0, 0],
-          position: [0, 0, 0],
-        });
-      } else if (node !== undefined) {
-        // Still reset poses for frames.
-        viewer.sceneTreeActions.updateNodeAttributes(key, {
-          wxyz: [1, 0, 0, 0],
-          position: [0, 0, 0],
         });
       }
     });
@@ -366,24 +403,23 @@ export function PlaybackFromEmbedData({ base64Data }: { base64Data: string }) {
   const [recording, setRecording] = useState<SerializedMessages | null>(null);
 
   function resetScene() {
-    const sceneTreeState = viewer.useSceneTree.getState();
+    const sceneTreeState = viewer.useSceneTree.getAll();
     Object.keys(sceneTreeState).forEach((key) => {
       if (key === "") return;
       const node = sceneTreeState[key];
       const nodeMessage = node?.message;
+      // Reset pose via mutable ref (no re-render).
+      viewer.mutable.current.nodePoseData[key] = {
+        wxyz: [1, 0, 0, 0],
+        position: [0, 0, 0],
+        poseUpdateState: "needsUpdate",
+      };
       if (
         nodeMessage !== undefined &&
         (nodeMessage.type !== "FrameMessage" || nodeMessage.props.show_axes)
       ) {
         viewer.sceneTreeActions.updateNodeAttributes(key, {
           visibility: false,
-          wxyz: [1, 0, 0, 0],
-          position: [0, 0, 0],
-        });
-      } else if (node !== undefined) {
-        viewer.sceneTreeActions.updateNodeAttributes(key, {
-          wxyz: [1, 0, 0, 0],
-          position: [0, 0, 0],
         });
       }
     });

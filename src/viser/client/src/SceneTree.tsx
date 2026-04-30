@@ -19,21 +19,13 @@ import { useSceneTreeState } from "./SceneTreeState";
 import { rayToViserCoords } from "./WorldTransformUtils";
 import { HoverableContext, HoverState } from "./HoverContext";
 import { shallowArrayEqual } from "./utils/shallowArrayEqual";
-
-/** Turn a click event to normalized OpenCV coordinate (NDC) vector.
- * Normalizes click coordinates to be between (0, 0) as upper-left corner,
- * and (1, 1) as lower-right corner, with (0.5, 0.5) being the center of the screen.
- * Uses offsetX/Y, and clientWidth/Height to get the coordinates.
- */
-function opencvXyFromPointerXy(
-  viewer: ViewerContextContents,
-  xy: [number, number],
-): THREE.Vector2 {
-  const mouseVector = new THREE.Vector2();
-  mouseVector.x = (xy[0] + 0.5) / viewer.mutable.current.canvas!.clientWidth;
-  mouseVector.y = (xy[1] + 0.5) / viewer.mutable.current.canvas!.clientHeight;
-  return mouseVector;
-}
+import { DragBinding } from "./dragUtils";
+import { useDragLayer } from "./DragLayer";
+import {
+  DragInput,
+  anyBindingMatches,
+  pointerButtonFromNative,
+} from "./dragUtils";
 import {
   CoordinateFrame,
   InstancedAxes,
@@ -47,6 +39,7 @@ import { SplatObject } from "./Splatting/GaussianSplats";
 import { Paper } from "@mantine/core";
 import GeneratedGuiContainer from "./ControlPanel/Generated";
 import { LineSegments } from "./Line";
+import { Arrows } from "./Arrows";
 import { shadowArgs } from "./ShadowArgs";
 import { CsmDirectionalLight } from "./CsmDirectionalLight";
 import { BasicMesh } from "./mesh/BasicMesh";
@@ -58,19 +51,26 @@ import { BatchedMesh } from "./mesh/BatchedMesh";
 import { SingleGlbAsset } from "./mesh/SingleGlbAsset";
 import { BatchedGlbAsset } from "./mesh/BatchedGlbAsset";
 import { normalizeScale } from "./utils/normalizeScale";
+import { opencvXyFromPointerXy } from "./utils/pointerCoords";
+
+/** Shared empty array so the `dragBindings` selector returns a stable
+ * reference when no bindings are set — otherwise `?? []` would allocate a
+ * fresh array per render and force downstream memoization to recompute. */
+const EMPTY_DRAG_BINDINGS: DragBinding[] = [];
 
 function rgbToInt(rgb: [number, number, number]): number {
   return (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
 }
 
-/** Type corresponding to a zustand-style useSceneTree hook. */
+/** Type corresponding to useSceneTree hook. */
 export type UseSceneTree = ReturnType<typeof useSceneTreeState>;
 
 /** Component for updating attributes of a scene node. */
 function SceneNodeLabel(props: { name: string }) {
   const viewer = React.useContext(ViewerContext)!;
   const labelVisible = viewer.useSceneTree(
-    (state) => state[props.name]?.labelVisible,
+    props.name,
+    (node) => node?.labelVisible,
   );
   return labelVisible ? (
     <Html>
@@ -89,15 +89,10 @@ function SceneNodeLabel(props: { name: string }) {
   ) : null;
 }
 
-function tripletListFromFloat32Buffer(data: Uint8Array<ArrayBufferLike>) {
-  const arrayView = new DataView(data.buffer, data.byteOffset, data.byteLength);
+function tripletListFromFloat32Array(data: Float32Array) {
   const triplets: [number, number, number][] = [];
-  for (let i = 0; i < arrayView.byteLength; i += 12) {
-    triplets.push([
-      arrayView.getFloat32(i, true), // little-endian
-      arrayView.getFloat32(i + 4, true),
-      arrayView.getFloat32(i + 8, true),
-    ]);
+  for (let i = 0; i < data.length; i += 3) {
+    triplets.push([data[i], data[i + 1], data[i + 2]]);
   }
   return triplets;
 }
@@ -133,6 +128,7 @@ const ViserSpotLight = React.forwardRef<
     <group ref={ref}>
       <spotLight
         ref={spotlightRef}
+        position={[0, 0, 0]}
         intensity={p.intensity}
         color={rgbToInt(p.color)}
         distance={p.distance}
@@ -507,6 +503,15 @@ function createObjectFactory(
         ),
       };
     }
+    case "ArrowMessage": {
+      return {
+        makeObject: (ref, children) => (
+          <Arrows ref={ref} {...message}>
+            {children}
+          </Arrows>
+        ),
+      };
+    }
     case "CatmullRomSplineMessage": {
       return {
         makeObject: (ref, children) => {
@@ -514,7 +519,7 @@ function createObjectFactory(
             <group ref={ref}>
               <group scale={normalizeScale(message.props.scale)}>
                 <CatmullRomLine
-                  points={tripletListFromFloat32Buffer(message.props.points)}
+                  points={tripletListFromFloat32Array(message.props.points)}
                   closed={message.props.closed}
                   curveType={message.props.curve_type}
                   tension={message.props.tension}
@@ -533,8 +538,8 @@ function createObjectFactory(
     case "CubicBezierSplineMessage": {
       return {
         makeObject: (ref, children) => {
-          const points = tripletListFromFloat32Buffer(message.props.points);
-          const controlPoints = tripletListFromFloat32Buffer(
+          const points = tripletListFromFloat32Array(message.props.points);
+          const controlPoints = tripletListFromFloat32Array(
             message.props.control_points,
           );
           return (
@@ -568,15 +573,8 @@ function createObjectFactory(
           <group ref={ref}>
             <group scale={normalizeScale(message.props.scale)}>
               <SplatObject
-                buffer={
-                  new Uint32Array(
-                    message.props.buffer.buffer.slice(
-                      message.props.buffer.byteOffset,
-                      message.props.buffer.byteOffset +
-                        message.props.buffer.byteLength,
-                    ),
-                  )
-                }
+                buffer={message.props.buffer}
+                sceneNodeName={message.name}
               />
             </group>
             {children}
@@ -627,6 +625,7 @@ function createObjectFactory(
         makeObject: (ref, children) => (
           <hemisphereLight
             ref={ref}
+            position={[0, 0, 0]}
             intensity={message.props.intensity}
             color={rgbToInt(message.props.sky_color)}
             groundColor={rgbToInt(message.props.ground_color)}
@@ -692,9 +691,8 @@ function createObjectFactory(
 
 export function SceneNodeThreeObject(props: { name: string }) {
   const viewer = React.useContext(ViewerContext)!;
-  const message = viewer.useSceneTree((state) => state[props.name]?.message);
+  const message = viewer.useSceneTree(props.name, (node) => node?.message);
   const ContextBridge = useContextBridge();
-  const updateNodeAttributes = viewer.sceneTreeActions.updateNodeAttributes;
 
   const {
     makeObject,
@@ -707,9 +705,20 @@ export function SceneNodeThreeObject(props: { name: string }) {
 
   const [unmount, setUnmount] = React.useState(false);
   const clickable =
-    viewer.useSceneTree((state) => state[props.name]?.clickable) ?? false;
+    viewer.useSceneTree(props.name, (node) => node?.clickable) ?? false;
+  // shallowArrayEqual: the server echoes a fresh `bindings` array on every
+  // `SetSceneNodeDragBindingsMessage` even if the content is unchanged; this
+  // prevents spurious re-renders when the binding set is identical.
+  const dragBindings =
+    viewer.useSceneTree(
+      props.name,
+      (node) => node?.dragBindings,
+      shallowArrayEqual,
+    ) ?? EMPTY_DRAG_BINDINGS;
+  const draggable = dragBindings.length > 0;
+  const interactive = clickable || draggable;
   const objRef = React.useRef<THREE.Object3D | null>(null);
-  const groupRef = React.useRef<THREE.Group>();
+  const groupRef = React.useRef<THREE.Group | null>(null);
 
   // Get children.
   const children = React.useMemo(
@@ -737,15 +746,16 @@ export function SceneNodeThreeObject(props: { name: string }) {
   // This is used for (1) suppressing click events and (2) unmounting when
   // unmountWhenInvisible is true. The latter is used for <Html /> components.
   function isDisplayed(): boolean {
-    const node = viewer.useSceneTree.getState()[props.name];
+    const node = viewer.useSceneTree.get(props.name);
     return node?.effectiveVisibility ?? false;
   }
 
   // Pose needs to be updated whenever component is remounted / object is re-created.
   React.useEffect(() => {
-    updateNodeAttributes(props.name, {
-      poseUpdateState: "needsUpdate",
-    });
+    const pose = viewerMutable.nodePoseData[props.name];
+    if (pose) {
+      pose.poseUpdateState = "needsUpdate";
+    }
   }, [objNode]);
 
   // Track hover state.
@@ -780,6 +790,18 @@ export function SceneNodeThreeObject(props: { name: string }) {
 
   // Reusable Vector2 for hover recheck raycasting.
   const pointerNDC = React.useMemo(() => new THREE.Vector2(), []);
+
+  // Drag state lives in the viewer-level DragLayer — this component only
+  // dispatches pointer events into it and reads bindings for matching.
+  const dragLayer = useDragLayer();
+
+  const getPointerXy = React.useCallback(
+    (clientX: number, clientY: number): [number, number] => {
+      const canvasBbox = viewerMutable.canvas!.getBoundingClientRect();
+      return [clientX - canvasBbox.left, clientY - canvasBbox.top];
+    },
+    [viewerMutable],
+  );
 
   // Update attributes on a per-frame basis. Currently does redundant work,
   // although this shouldn't be a bottleneck.
@@ -822,8 +844,8 @@ export function SceneNodeThreeObject(props: { name: string }) {
         }
       }
 
-      // Use getState() for performance in render loops (no re-renders).
-      const node = viewer.useSceneTree.getState()[props.name];
+      // Use .get() for performance in render loops (no re-renders).
+      const node = viewer.useSceneTree.get(props.name);
 
       // Unmount when invisible.
       // Examples: <Html /> components, PivotControls.
@@ -837,9 +859,8 @@ export function SceneNodeThreeObject(props: { name: string }) {
         const displayed = isDisplayed();
         if (displayed && unmount) {
           if (objRef.current !== null) objRef.current.visible = false;
-          updateNodeAttributes(props.name, {
-            poseUpdateState: "needsUpdate",
-          });
+          const pose = viewerMutable.nodePoseData[props.name];
+          if (pose) pose.poseUpdateState = "needsUpdate";
           setUnmount(false);
         }
         if (!displayed && !unmount) {
@@ -855,9 +876,13 @@ export function SceneNodeThreeObject(props: { name: string }) {
       objRef.current.visible =
         node.overrideVisibility ?? node.visibility ?? true;
 
-      // If a clickable node becomes invisible while hovered, clean up hover
+      // If an interactive node becomes invisible while hovered, clean up hover
       // state so the cursor doesn't stay stuck as "pointer".
-      if (!node.effectiveVisibility && hoveredRef.current.isHovered && clickable) {
+      if (
+        !node.effectiveVisibility &&
+        hoveredRef.current.isHovered &&
+        interactive
+      ) {
         hoveredRef.current.isHovered = false;
         hoveredRef.current.instanceId = null;
         viewerMutable.hoveredElementsCount--;
@@ -866,17 +891,21 @@ export function SceneNodeThreeObject(props: { name: string }) {
         }
       }
 
-      if (node.poseUpdateState == "needsUpdate") {
-        // Update pose state through zustand action.
-        updateNodeAttributes(props.name, {
-          poseUpdateState: "updated",
-        });
+      // If a node disappears mid-drag, end the drag cleanly.
+      if (!node.effectiveVisibility && dragLayer !== null) {
+        dragLayer.stopIfNodeIs(props.name);
+      }
+
+      // Read pose from mutable ref (non-reactive, no re-renders).
+      const pose = viewerMutable.nodePoseData[props.name];
+      if (pose && pose.poseUpdateState === "needsUpdate") {
+        pose.poseUpdateState = "updated";
 
         if (message!.type !== "LabelMessage") {
-          const wxyz = node.wxyz ?? [1, 0, 0, 0];
+          const wxyz = pose.wxyz;
           objRef.current.quaternion.set(wxyz[1], wxyz[2], wxyz[3], wxyz[0]);
         }
-        const position = node.position ?? [0, 0, 0];
+        const position = pose.position;
         objRef.current.position.set(position[0], position[1], position[2]);
 
         // Update matrices if necessary. This is necessary for PivotControls.
@@ -884,6 +913,7 @@ export function SceneNodeThreeObject(props: { name: string }) {
         if (!objRef.current.matrixWorldAutoUpdate)
           objRef.current.updateMatrixWorld();
       }
+
     },
     // Other useFrame hooks may depend on transforms + visibility. So it's best
     // to call this hook early.
@@ -897,8 +927,8 @@ export function SceneNodeThreeObject(props: { name: string }) {
   // Clicking logic.
   const sendClicksThrottled = useThrottledMessageSender(50).send;
 
-  // Handle case where clickable is toggled to false while still hovered.
-  if (!clickable && hoveredRef.current.isHovered) {
+  // Handle case where interactivity is toggled off while still hovered.
+  if (!interactive && hoveredRef.current.isHovered) {
     hoveredRef.current.isHovered = false;
     viewerMutable.hoveredElementsCount--;
     if (viewerMutable.hoveredElementsCount === 0) {
@@ -906,7 +936,19 @@ export function SceneNodeThreeObject(props: { name: string }) {
     }
   }
 
-  // Reset hover state on unmount only.
+  // End the active drag if this node's draggability is revoked (bindings
+  // cleared) or the component unmounts. DragLayer no-ops if the active
+  // drag targets a different node, so this is safe to call unconditionally.
+  React.useEffect(() => {
+    if (!draggable && dragLayer !== null) {
+      dragLayer.stopIfNodeIs(props.name);
+    }
+  }, [draggable, dragLayer, props.name]);
+
+  // Reset hover state on true unmount, and tell DragLayer to end the
+  // drag if it targets this node.
+  const dragLayerRef = React.useRef(dragLayer);
+  dragLayerRef.current = dragLayer;
   useEffect(() => {
     return () => {
       if (hoveredRef.current.isHovered) {
@@ -916,6 +958,7 @@ export function SceneNodeThreeObject(props: { name: string }) {
           document.body.style.cursor = "auto";
         }
       }
+      dragLayerRef.current?.stopIfNodeIs(props.name);
     };
   }, []);
 
@@ -939,21 +982,81 @@ export function SceneNodeThreeObject(props: { name: string }) {
           //  - onPointerUp, if triggered, sends a click if dragged = false.
           // Note: It would be cool to have dragged actions too...
           onPointerDown={
-            !clickable
+            !interactive
               ? undefined
               : (e) => {
                   if (!isDisplayed()) return;
                   e.stopPropagation();
                   const state = dragInfo.current;
-                  const canvasBbox =
-                    viewerMutable.canvas!.getBoundingClientRect();
-                  state.startClientX = e.clientX - canvasBbox.left;
-                  state.startClientY = e.clientY - canvasBbox.top;
+                  const [pointerX, pointerY] = getPointerXy(
+                    e.clientX,
+                    e.clientY,
+                  );
+                  state.startClientX = pointerX;
+                  state.startClientY = pointerY;
                   state.dragging = false;
+
+                  // Hand off to DragLayer. It no-ops if any drag is already
+                  // active (mutex) or if no binding matches the input.
+                  if (!draggable || dragLayer === null) return;
+                  if (objRef.current === null) return;
+                  const buttonName = pointerButtonFromNative(
+                    e.nativeEvent.button,
+                  );
+                  if (buttonName === null) return;
+                  const input: DragInput = {
+                    button: buttonName,
+                    ctrl: e.ctrlKey,
+                    meta: e.metaKey,
+                    shift: e.shiftKey,
+                    alt: e.altKey,
+                  };
+                  if (!anyBindingMatches(dragBindings, input)) return;
+
+                  e.nativeEvent.preventDefault();
+                  state.dragging = true;
+                  dragLayer.beginDrag({
+                    nodeName: props.name,
+                    // Batched handles (meshes/GLBs/axes) set
+                    // computeClickInstanceIndexFromInstanceId; plain
+                    // handles leave it undefined and instance_index is
+                    // null on the wire.
+                    instanceIndex:
+                      computeClickInstanceIndexFromInstanceId === undefined
+                        ? null
+                        : computeClickInstanceIndexFromInstanceId(e.instanceId),
+                    targetObj: objRef.current,
+                    eventPoint: e.point,
+                    pointerXy: [pointerX, pointerY],
+                    pointerId: e.nativeEvent.pointerId,
+                    input,
+                    bindings: dragBindings,
+                  });
+                }
+          }
+          onContextMenu={
+            !draggable
+              ? undefined
+              : (e) => {
+                  if (!isDisplayed()) return;
+                  // Only suppress the browser context menu if a right-button
+                  // binding matches the current modifier state. A node
+                  // registered for shift+right-drag shouldn't eat plain
+                  // right-clicks.
+                  const input: DragInput = {
+                    button: "right",
+                    ctrl: e.ctrlKey,
+                    meta: e.metaKey,
+                    shift: e.shiftKey,
+                    alt: e.altKey,
+                  };
+                  if (!anyBindingMatches(dragBindings, input)) return;
+                  e.nativeEvent.preventDefault();
+                  e.stopPropagation();
                 }
           }
           onPointerMove={
-            !clickable
+            !interactive
               ? undefined
               : (e) => {
                   if (!isDisplayed()) return;
@@ -965,36 +1068,44 @@ export function SceneNodeThreeObject(props: { name: string }) {
                     clientY: e.clientY,
                   };
 
+                  // If a drag has been initiated, DragLayer's window
+                  // pointermove handler owns the gesture — skip local
+                  // click-vs-drag bookkeeping.
                   const state = dragInfo.current;
-                  const canvasBbox =
-                    viewerMutable.canvas!.getBoundingClientRect();
-                  const deltaX =
-                    e.clientX - canvasBbox.left - state.startClientX;
-                  const deltaY =
-                    e.clientY - canvasBbox.top - state.startClientY;
+                  if (state.dragging) return;
+
+                  const [pointerX, pointerY] = getPointerXy(
+                    e.clientX,
+                    e.clientY,
+                  );
+                  const deltaX = pointerX - state.startClientX;
+                  const deltaY = pointerY - state.startClientY;
                   // Minimum motion.
                   if (Math.abs(deltaX) <= 3 && Math.abs(deltaY) <= 3) return;
                   state.dragging = true;
                 }
           }
           onPointerUp={
-            !clickable
+            !interactive
               ? undefined
               : (e) => {
                   if (!isDisplayed()) return;
                   e.stopPropagation();
+
+                  // If a drag was active, DragLayer's window pointerup
+                  // handler ends it and sends the end message. Here we just
+                  // need to suppress the local click path.
                   const state = dragInfo.current;
                   if (state.dragging) return;
+                  if (!clickable) return;
                   // Convert ray to viser coordinates.
                   const ray = rayToViserCoords(viewer, e.ray);
 
                   // Send OpenCV image coordinates to the server (normalized).
-                  const canvasBbox =
-                    viewerMutable.canvas!.getBoundingClientRect();
-                  const mouseVectorOpenCV = opencvXyFromPointerXy(viewer, [
-                    e.clientX - canvasBbox.left,
-                    e.clientY - canvasBbox.top,
-                  ]);
+                  const mouseVectorOpenCV = opencvXyFromPointerXy(
+                    viewer,
+                    getPointerXy(e.clientX, e.clientY),
+                  );
 
                   sendClicksThrottled({
                     type: "SceneNodeClickMessage",
@@ -1015,7 +1126,7 @@ export function SceneNodeThreeObject(props: { name: string }) {
                 }
           }
           onPointerOver={
-            !clickable
+            !interactive
               ? undefined
               : (e) => {
                   if (!isDisplayed()) return;
@@ -1043,7 +1154,7 @@ export function SceneNodeThreeObject(props: { name: string }) {
                 }
           }
           onPointerOut={
-            !clickable
+            !interactive
               ? undefined
               : () => {
                   if (!isDisplayed()) return;
@@ -1075,7 +1186,8 @@ export function SceneNodeThreeObject(props: { name: string }) {
 function SceneNodeChildren(props: { name: string }) {
   const viewer = React.useContext(ViewerContext)!;
   const childrenNames = viewer.useSceneTree(
-    (state) => state[props.name]?.children,
+    props.name,
+    (node) => node?.children,
     shallowArrayEqual,
   );
   return (

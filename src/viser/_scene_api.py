@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import io
 import time
 import warnings
@@ -29,6 +30,7 @@ from ._assignable_props_api import colors_to_uint8
 from ._image_encoding import cv2_imencode_with_fallback
 from ._scene_handles import (
     AmbientLightHandle,
+    ArrowsHandle,
     BatchedAxesHandle,
     BatchedGlbHandle,
     BatchedMeshHandle,
@@ -53,6 +55,7 @@ from ._scene_handles import (
     PointCloudHandle,
     PointLightHandle,
     RectAreaLightHandle,
+    SceneNodeDragEvent,
     SceneNodeHandle,
     SceneNodePointerEvent,
     ScenePointerEvent,
@@ -61,7 +64,8 @@ from ._scene_handles import (
     SpotLightHandle,
     TransformControlsEvent,
     TransformControlsHandle,
-    _ClickableSceneNodeHandle,
+    _DragInput,
+    _RaycastSupportedSceneNodeHandle,
     _TransformControlsState,
 )
 from ._threadpool_exceptions import print_threadpool_errors
@@ -81,6 +85,44 @@ RgbTupleOrArray: TypeAlias = Union[
 ]
 
 NoneOrCoroutine = TypeVar("NoneOrCoroutine", None, Coroutine)
+
+
+def _drag_input_matches_filter(
+    input: _DragInput,
+    filter_button: _messages.DragButton,
+    filter_modifiers: Tuple[_messages._DragModifierAtom, ...] | None,
+) -> bool:
+    """Return whether a drag input matches a registered binding filter.
+
+    ``filter_modifiers=None`` is a wildcard; otherwise the filter is
+    exact-match ("these modifiers held, others not"). ``"cmd/ctrl"`` treats
+    Ctrl and Cmd (meta) as interchangeable — matches whenever either is
+    held.
+
+    The client mirrors this logic in ``matchesDragBinding`` (see
+    ``src/viser/client/src/dragUtils.ts``) to filter at the source
+    before sending a drag-start. Both must agree: the client decides
+    whether to enter drag mode at all; the server decides which
+    registered callbacks fire per phase. Drift = silent missed drags
+    or spurious teardowns.
+    """
+    if filter_button not in ("any", input.button):
+        return False
+    if filter_modifiers is None:
+        return True
+    # filter_modifiers has at most 3 elements (DragModifier literal); using
+    # `in` directly on the tuple avoids per-event allocation.
+    if input.shift != ("shift" in filter_modifiers):
+        return False
+    if input.alt != ("alt" in filter_modifiers):
+        return False
+    if "cmd/ctrl" in filter_modifiers:
+        if not (input.ctrl or input.meta):
+            return False
+    else:
+        if input.ctrl or input.meta:
+            return False
+    return True
 
 
 def _encode_rgb(rgb: RgbTupleOrArray) -> tuple[int, int, int]:
@@ -162,6 +204,23 @@ class SceneApi:
         ] = {}
         self._handle_from_node_name: dict[str, SceneNodeHandle] = {}
         self._children_from_node_name: dict[str, set[str]] = {}
+        # Tracks handles with an in-flight drag gesture, plus the last
+        # message we processed for that drag. Populated on
+        # ``phase="start"``, refreshed on ``phase="update"``, cleared on
+        # ``phase="end"``. Lets us dispatch ``on_drag_end`` even when
+        # the user calls ``handle.remove()`` mid-drag (which pops the
+        # handle from ``_handle_from_node_name``) and when a client
+        # disconnects mid-drag (where the ``end`` message never
+        # arrives) — see ``_drop_active_drags_for_client``. Without
+        # this the end callback is silently dropped and per-drag user
+        # state leaks. Keyed by ``(client_id, node_name)`` because two
+        # clients can drag the same node concurrently — keying by name
+        # alone would let one client's start overwrite the other's,
+        # and ``end`` from the first client would pop the wrong entry.
+        self._active_drag_handles: dict[
+            tuple[ClientId, str],
+            tuple[_RaycastSupportedSceneNodeHandle, _messages.SceneNodeDragMessage],
+        ] = {}
 
         self._scene_pointer_cb: (
             Callable[[ScenePointerEvent], None | Coroutine] | None
@@ -196,9 +255,39 @@ class SceneApi:
             self._handle_node_click_updates,
         )
         self._websock_interface.register_handler(
+            _messages.SceneNodeDragMessage, self._handle_node_drag
+        )
+        self._websock_interface.register_handler(
             _messages.ScenePointerMessage,
             self._handle_scene_pointer_updates,
         )
+
+    def _is_drag_active_for(self, name: str) -> bool:
+        """Whether the named scene node currently has any in-flight drag
+        gesture (from any connected client). Used by ``remove()`` to
+        decide whether to clear ``drag_cb`` immediately or preserve it
+        until the in-flight drag's ``end`` message arrives."""
+        return any(key[1] == name for key in self._active_drag_handles)
+
+    async def _drop_active_drags_for_client(self, client_id: ClientId) -> None:
+        """Drop any in-flight drag entries for a disconnecting client,
+        synthesizing a ``phase="end"`` event so user state allocated in
+        ``on_drag_start`` can be released. Without this, a mid-drag
+        disconnect both leaks the ``_active_drag_handles`` entry (the
+        entry pins a ``SceneNodeHandle`` reference, and
+        ``_is_drag_active_for`` will return spurious-true for the
+        leaked node name — preventing a future ``remove()`` from
+        clearing its callbacks) and silently skips ``on_drag_end``."""
+        stale_keys = [k for k in self._active_drag_handles if k[0] == client_id]
+        for k in stale_keys:
+            entry = self._active_drag_handles.pop(k, None)
+            if entry is None:
+                continue
+            handle, last_msg = entry
+            # Synthesize an end event using the most recently observed
+            # client-reported positions.
+            synthetic = dataclasses.replace(last_msg, phase="end")
+            await self._dispatch_drag_callbacks(client_id, handle, synthetic)
 
     def _ensure_ancestors_exist(self, name: str) -> None:
         """Create intermediate frame nodes for any missing ancestors of `name`."""
@@ -771,6 +860,76 @@ class SceneApi:
             ),
         )
         return LineSegmentsHandle._make(self, message, name, wxyz, position, visible)
+
+    @deprecated_positional_shim
+    def add_arrows(
+        self,
+        name: str,
+        points: np.ndarray,
+        colors: np.ndarray | RgbTupleOrArray,
+        *,
+        shaft_radius: float = 0.02,
+        head_radius: float = 0.05,
+        head_length: float = 0.1,
+        line_width: float = 1,
+        scale: float | tuple[float, float, float] = 1.0,
+        wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
+        position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
+        visible: bool = True,
+    ) -> ArrowsHandle:
+        """Add arrows to the scene.
+
+        For more complex arrow geometry or material options, consider using
+        :meth:`add_batched_meshes_simple` directly with custom cylinder/cone meshes.
+
+        Args:
+            name: A scene tree name. Names in the format of /parent/child can
+                be used to define a kinematic tree.
+            points: A numpy array of shape (N, 2, 3) defining start/end points
+                for each of N arrows.
+            colors: Colors of the arrows. Can be a single color as an RGB tuple or
+                np.ndarray of shape (3,) to apply to all arrows, or an np.ndarray of
+                shape (N, 3) to specify a color per arrow.
+            shaft_radius: Radius of the arrow shaft.
+            head_radius: Radius of the arrow head cone.
+            head_length: Length of the arrow head.
+            line_width: Width of the lines (fallback rendering).
+            scale: Scale of the arrows. A single float for uniform
+                scaling or a tuple of (x, y, z) for per-axis scaling.
+            wxyz: Quaternion rotation to parent frame from local frame (R_pl).
+            position: Translation to parent frame from local frame (t_pl).
+            visible: Whether or not these arrows are initially visible.
+
+        Returns:
+            Handle for manipulating scene node.
+        """
+        points_array = np.asarray(points, dtype=np.float32)
+        if (
+            points_array.ndim != 3
+            or points_array.shape[1] != 2
+            or points_array.shape[2] != 3
+        ):
+            raise ValueError("points should have shape (N, 2, 3) for N arrows.")
+
+        colors_array = colors_to_uint8(np.asarray(colors))
+        assert colors_array.shape in {
+            (points_array.shape[0], 3),
+            (3,),
+        }, "Shape of colors should be (N, 3) or (3,)."
+
+        message = _messages.ArrowMessage(
+            name=name,
+            props=_messages.ArrowProps(
+                points=points_array,
+                colors=colors_array,
+                shaft_radius=shaft_radius,
+                head_radius=head_radius,
+                head_length=head_length,
+                line_width=line_width,
+                scale=scale,
+            ),
+        )
+        return ArrowsHandle._make(self, message, name, wxyz, position, visible)
 
     @overload
     def add_spline_catmull_rom(
@@ -1397,6 +1556,7 @@ class SceneApi:
         ] = "square",
         precision: Literal["float16", "float32"] = "float16",
         scale: float | tuple[float, float, float] = 1.0,
+        point_shading: Literal["flat", "gradient"] = "gradient",
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
         visible: bool = True,
@@ -1415,6 +1575,8 @@ class SceneApi:
                 will be cast to this precision.
             scale: Scale of the point cloud. A single float for uniform scaling
                 or a tuple of (x, y, z) for per-axis scaling.
+            point_shading: Shading mode for points. "flat" renders solid colors.
+                "gradient" adds center-to-edge shading for a sphere-like look.
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation to parent frame from local frame (t_pl).
             visible: Whether or not this scene node is initially visible.
@@ -1433,17 +1595,19 @@ class SceneApi:
         message = _messages.PointCloudMessage(
             name=name,
             props=_messages.PointCloudProps(
-                points=points.astype(
-                    {
+                points=np.asarray(
+                    points,
+                    dtype={
                         "float16": np.float16,
                         "float32": np.float32,
-                    }[precision]
+                    }[precision],
                 ),
                 colors=colors_cast,
                 point_size=point_size,
                 point_shape=point_shape,
                 precision=precision,
                 scale=scale,
+                point_shading=point_shading,
             ),
         )
         return PointCloudHandle._make(self, message, name, wxyz, position, visible)
@@ -2588,12 +2752,101 @@ class SceneApi:
                 client=self._get_client_handle(client_id),
                 client_id=client_id,
                 event="click",
-                target=cast(_ClickableSceneNodeHandle, handle),
+                target=cast(_RaycastSupportedSceneNodeHandle, handle),
                 ray_origin=message.ray_origin,
                 ray_direction=message.ray_direction,
                 screen_pos=message.screen_pos,
                 instance_index=message.instance_index,
             )
+            if asyncio.iscoroutinefunction(cb):
+                await cb(event)
+            else:
+                self._thread_executor.submit(cb, event).add_done_callback(
+                    print_threadpool_errors
+                )
+
+    async def _handle_node_drag(
+        self,
+        client_id: ClientId,
+        message: _messages.SceneNodeDragMessage,
+    ) -> None:
+        """Dispatch a scene-node drag start/update/end message to matching
+        callbacks.
+
+        Note on ordering: sync callbacks are submitted to a thread pool
+        fire-and-forget, so two drags messages dispatched back-to-back
+        (e.g. start + update) can race — the update's callback may run
+        before the start's callback finishes, leaving user state
+        half-initialized. Async callbacks are awaited in order and don't
+        have this issue, so for stateful gestures define your callbacks
+        as ``async def`` (with no internal ``await`` s, so each runs
+        atomically on the event loop)."""
+        # On phase="start", look up the handle in the live registry and
+        # remember it (with the message, so a synthetic end on
+        # disconnect can carry the latest positions). On update, refresh
+        # the stored message. On update/end, prefer the active-drag map
+        # so we can still dispatch even if the node was removed
+        # mid-drag — the user's on_drag_end MUST fire so per-drag state
+        # can be released. The active-drag entry is always cleared on
+        # ``end``, even when dispatch falls through.
+        active_key = (client_id, message.name)
+        handle: SceneNodeHandle | None
+        if message.phase == "start":
+            handle = self._handle_from_node_name.get(message.name, None)
+            if isinstance(handle, _RaycastSupportedSceneNodeHandle):
+                self._active_drag_handles[active_key] = (handle, message)
+        else:
+            entry = self._active_drag_handles.get(active_key)
+            if entry is not None:
+                handle = entry[0]
+                if message.phase == "update":
+                    self._active_drag_handles[active_key] = (handle, message)
+            else:
+                handle = self._handle_from_node_name.get(message.name, None)
+        if message.phase == "end":
+            self._active_drag_handles.pop(active_key, None)
+        if not isinstance(handle, _RaycastSupportedSceneNodeHandle):
+            return
+
+        await self._dispatch_drag_callbacks(client_id, handle, message)
+
+    async def _dispatch_drag_callbacks(
+        self,
+        client_id: ClientId,
+        handle: _RaycastSupportedSceneNodeHandle,
+        message: _messages.SceneNodeDragMessage,
+    ) -> None:
+        """Run all matching ``handle`` drag callbacks for ``message``.
+
+        Shared by ``_handle_node_drag`` (live messages) and
+        ``_drop_active_drags_for_client`` (synthetic end on disconnect)."""
+        input = _DragInput(
+            button=message.button,
+            ctrl=message.ctrl,
+            meta=message.meta,
+            shift=message.shift,
+            alt=message.alt,
+        )
+        matching = handle._dispatch_drag(message.phase, input)
+        if not matching:
+            return
+
+        event = SceneNodeDragEvent(
+            client=self._get_client_handle(client_id),
+            client_id=client_id,
+            target=cast(_RaycastSupportedSceneNodeHandle, handle),
+            instance_index=message.instance_index,
+            start_position=message.start_position,
+            start_screen_pos=message.start_screen_pos,
+            end_position=message.end_position,
+            end_screen_pos=message.end_screen_pos,
+            button=message.button,
+            ctrl=message.ctrl,
+            meta=message.meta,
+            shift=message.shift,
+            alt=message.alt,
+        )
+        for cb in matching:
             if asyncio.iscoroutinefunction(cb):
                 await cb(event)
             else:
@@ -2753,7 +3006,7 @@ class SceneApi:
         """
 
         # Avoids circular import.
-        from ._gui_api import _make_uuid
+        from ._gui_handles import _make_uuid
 
         # New name to make the type checker happy; ViserServer and ClientHandle inherit
         # from both GuiApi and MessageApi. The pattern below is unideal.
@@ -2810,6 +3063,34 @@ class SceneApi:
         handle = self._handle_from_node_name.get(name)
         if handle is not None:
             handle.remove()
+
+    def as_html(self, dark_mode: bool = False) -> str:
+        """Get a standalone HTML string for the current scene.
+
+        Returns a self-contained HTML document that can be saved to a file
+        or embedded in other contexts.
+
+        This method is only available when called on ``server.scene``, not on
+        individual client scene APIs.
+
+        See also :meth:`viser.infra.StateSerializer.as_html()`.
+
+        Args:
+            dark_mode: Use dark color scheme.
+
+        Returns:
+            A complete HTML document as a string.
+        """
+        from ._viser import ViserServer
+
+        assert isinstance(self._owner, ViserServer), (
+            "as_html() is only available on server.scene, not on client scene APIs."
+        )
+
+        # Clear any previous recording state to allow multiple calls.
+        self._owner._websock_server._record_handles.clear()
+
+        return self._owner.get_scene_serializer().as_html(dark_mode)
 
     def show(self, height: int = 400, dark_mode: bool = False) -> None:
         """Display the scene in a Jupyter notebook or web browser.

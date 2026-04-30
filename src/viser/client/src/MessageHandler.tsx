@@ -11,6 +11,7 @@ import {
   FileTransferStartDownload,
   Message,
   SceneNodeMessage,
+  GuiComponentMessage,
   isGuiComponentMessage,
   isSceneNodeMessage,
 } from "./WebsocketMessages";
@@ -19,7 +20,8 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Button, Progress } from "@mantine/core";
 import { IconCheck, IconDownload } from "@tabler/icons-react";
 import { computeT_threeworld_world } from "./WorldTransformUtils";
-import { rootNodeTemplate } from "./SceneTreeState";
+import { rootNodeTemplate, SceneNode } from "./SceneTreeState";
+import { applyGuiConfigUpdate } from "./ControlPanel/GuiState";
 import { GaussianSplatsContext } from "./Splatting/GaussianSplatsHelpers";
 
 /** Returns a handler for all incoming messages. */
@@ -27,33 +29,33 @@ function useMessageHandler() {
   const viewer = useContext(ViewerContext)!;
   const viewerMutable = viewer.mutable.current;
 
-  // We could reduce the redundancy here if we wanted to.
-  // https://github.com/viser-project/viser/issues/39
-  const updateSceneNode = viewer.sceneTreeActions.updateSceneNodeProps;
   const removeSceneNode = viewer.sceneTreeActions.removeSceneNode;
   const addSceneNode = viewer.sceneTreeActions.addSceneNode;
-  const setTheme = viewer.useGui((state) => state.setTheme);
+  const setTheme = viewer.guiActions.setTheme;
 
   // Initial camera store actions for updating reset view state.
-  const initialCamera = viewer.useInitialCamera;
-  const setShareUrl = viewer.useGui((state) => state.setShareUrl);
-  const addGui = viewer.useGui((state) => state.addGui);
-  const addModal = viewer.useGui((state) => state.addModal);
-  const removeModal = viewer.useGui((state) => state.removeModal);
-  const removeGui = viewer.useGui((state) => state.removeGui);
-  const updateGuiProps = viewer.useGui((state) => state.updateGuiProps);
-  const updateUploadState = viewer.useGui((state) => state.updateUploadState);
+  const initialCameraActions = viewer.initialCameraActions;
+  const setShareUrl = viewer.guiActions.setShareUrl;
+  const addGui = viewer.guiActions.addGui;
+  const addModal = viewer.guiActions.addModal;
+  const removeModal = viewer.guiActions.removeModal;
+  const removeGui = viewer.guiActions.removeGui;
+  const updateUploadState = viewer.guiActions.updateUploadState;
+  const setFormDirty = viewer.guiActions.setFormDirty;
+  const clearFormDirty = viewer.guiActions.clearFormDirty;
+  const addCommand = viewer.guiActions.addCommand;
+  const updateCommand = viewer.guiActions.updateCommand;
+  const removeCommand = viewer.guiActions.removeCommand;
 
   // Same as addSceneNode, but make a parent in the form of a dummy coordinate
   // frame if it doesn't exist yet.
   function addSceneNodeMakeParents(message: SceneNodeMessage) {
     // Make sure scene node is in attributes.
-    const currentNode = viewer.useSceneTree.getState()[message.name];
+    const currentNode = viewer.useSceneTree.get(message.name);
 
     // Make sure parents exists.
-    const sceneState = viewer.useSceneTree.getState();
     const parentName = message.name.split("/").slice(0, -1).join("/");
-    if (sceneState[parentName]?.message === undefined) {
+    if (viewer.useSceneTree.get(parentName)?.message === undefined) {
       addSceneNodeMakeParents({
         ...rootNodeTemplate.message,
         name: parentName,
@@ -69,16 +71,45 @@ function useMessageHandler() {
     // flickering when we replace objects (old object will take the pose of the new
     // object while it's being loaded/mounted).
     if (message !== currentNode?.message) {
-      viewer.sceneTreeActions.updateNodeAttributes(message.name, {
-        poseUpdateState: "waitForMakeObject",
-      });
+      const pose = viewerMutable.nodePoseData[message.name];
+      if (pose) {
+        pose.poseUpdateState = "waitForMakeObject";
+      } else {
+        viewerMutable.nodePoseData[message.name] = {
+          wxyz: [1, 0, 0, 0],
+          position: [0, 0, 0],
+          poseUpdateState: "waitForMakeObject",
+        };
+      }
     }
   }
 
   const fileDownloadHandler = useFileDownloadHandler();
 
+  // Return type for the message handler. Messages either:
+  // - Return undefined (handled immediately, no batching needed)
+  // - Return a scene node update (attributes and/or props) to be batched
+  // - Return a GUI update to be batched
+  type HandleMessageResult =
+    | undefined
+    | {
+        kind: "sceneNodeAttrUpdate";
+        targetNode: string;
+        updates: Partial<SceneNode>;
+      }
+    | {
+        kind: "sceneNodePropsUpdate";
+        targetNode: string;
+        propsUpdates: { [key: string]: any };
+      }
+    | {
+        kind: "guiUpdate";
+        uuid: string;
+        updates: { [key: string]: any };
+      };
+
   // Return message handler.
-  return (message: Message) => {
+  return (message: Message): HandleMessageResult => {
     if (isGuiComponentMessage(message)) {
       addGui(message);
       return;
@@ -93,21 +124,11 @@ function useMessageHandler() {
           poses: [],
         };
 
-        const bone_wxyzs = new Float32Array(
-          message.props.bone_wxyzs.buffer.slice(
-            message.props.bone_wxyzs.byteOffset,
-            message.props.bone_wxyzs.byteOffset +
-              message.props.bone_wxyzs.byteLength,
-          ),
-        );
-        const bone_positions = new Float32Array(
-          message.props.bone_positions.buffer.slice(
-            message.props.bone_positions.byteOffset,
-            message.props.bone_positions.byteOffset +
-              message.props.bone_positions.byteLength,
-          ),
-        );
-        for (let i = 0; i < message.props.bone_wxyzs!.length; i++) {
+        // Bone data arrives as Float32Array views. Use directly.
+        const bone_wxyzs = message.props.bone_wxyzs;
+        const bone_positions = message.props.bone_positions;
+        const numBones = bone_positions.length / 3;
+        for (let i = 0; i < numBones; i++) {
           viewerMutable.skinnedMeshState[message.name].poses.push({
             wxyz: [
               bone_wxyzs[4 * i],
@@ -131,8 +152,11 @@ function useMessageHandler() {
 
     switch (message.type) {
       case "SceneNodeUpdateMessage": {
-        updateSceneNode(message.name, message.updates);
-        return;
+        return {
+          kind: "sceneNodePropsUpdate",
+          targetNode: message.name,
+          propsUpdates: message.updates,
+        };
       }
       // Set the share URL.
       case "ShareUrlUpdated": {
@@ -147,7 +171,7 @@ function useMessageHandler() {
       }
       // Set the GUI panel label.
       case "SetGuiPanelLabelMessage": {
-        viewer.useGui.setState({ label: message.label ?? "" });
+        viewer.useGui.set({ label: message.label ?? "" });
         return;
       }
       // Configure the theme.
@@ -164,9 +188,15 @@ function useMessageHandler() {
         return;
       }
 
-      // Add a notification.
-      case "NotificationMessage": {
-        (message.mode === "show" ? notifications.show : notifications.update)({
+      // Show or update a notification. Show and Update carry the same
+      // NotificationProps shape, so one construction works for both.
+      case "NotificationShowMessage":
+      case "NotificationUpdateMessage": {
+        const fn =
+          message.type === "NotificationShowMessage"
+            ? notifications.show
+            : notifications.update;
+        fn({
           id: message.uuid,
           title: message.props.title,
           message: message.props.body,
@@ -210,19 +240,19 @@ function useMessageHandler() {
 
       // Add an environment map.
       case "EnvironmentMapMessage": {
-        viewer.useEnvironment.setState({ environmentMap: message });
+        viewer.useEnvironment.set({ environmentMap: message });
         return;
       }
 
       // Configure fog.
       case "FogMessage": {
-        viewer.useEnvironment.setState({ fog: message });
+        viewer.useEnvironment.set({ fog: message });
         return;
       }
 
       // Disable/enable default lighting.
       case "EnableLightsMessage": {
-        viewer.useEnvironment.setState({
+        viewer.useEnvironment.set({
           enableDefaultLights: message.enabled,
           enableDefaultLightsShadows: message.cast_shadow,
         });
@@ -236,6 +266,20 @@ function useMessageHandler() {
 
       case "GuiCloseModalMessage": {
         removeModal(message.uuid);
+        return;
+      }
+
+      // Register, update, or remove command palette actions.
+      case "RegisterCommandMessage": {
+        addCommand(message);
+        return;
+      }
+      case "CommandUpdateMessage": {
+        updateCommand(message.uuid, message.updates);
+        return;
+      }
+      case "RemoveCommandMessage": {
+        removeCommand(message.uuid);
         return;
       }
 
@@ -254,15 +298,11 @@ function useMessageHandler() {
         break;
       }
       case "SetCameraLookAtMessage": {
-        // Setting initial camera parameters.
-        const wasDefault = initialCamera.getState().lookAt.source === "default";
         if (message.initial) {
-          // URL params take priority, ignore server's initial value.
-          initialCamera.getState().setLookAt(message.look_at, "message");
-
-          // If this is the first initial camera: we'll also move the actual
-          // camera. If not, we return immediately.
-          if (!wasDefault) return;
+          // Update store only; InitialCameraSetter will react to the
+          // source change and call resetCameraPose.
+          initialCameraActions.setLookAt(message.look_at, "message");
+          return;
         }
 
         const cameraControls = viewerMutable.cameraControl!;
@@ -278,15 +318,11 @@ function useMessageHandler() {
         return;
       }
       case "SetCameraUpDirectionMessage": {
-        // Setting initial camera parameters.
-        const wasDefault = initialCamera.getState().up.source === "default";
         if (message.initial) {
-          // URL params take priority, ignore server's initial value.
-          initialCamera.getState().setUp(message.position, "message");
-
-          // If this is the first initial camera: we'll also move the actual
-          // camera. If not, we return immediately.
-          if (!wasDefault) return;
+          // Update store only; InitialCameraSetter will react to the
+          // source change and call resetCameraPose.
+          initialCameraActions.setUp(message.position, "message");
+          return;
         }
 
         const camera = viewerMutable.camera!;
@@ -319,18 +355,11 @@ function useMessageHandler() {
         return;
       }
       case "SetCameraPositionMessage": {
-        console.log("set camera position");
-        // Setting initial camera parameters.
-        const wasDefault =
-          initialCamera.getState().position.source === "default";
         if (message.initial) {
-          // URL params take priority, ignore server's initial value.
-          initialCamera.getState().setPosition(message.position, "message");
-
-          // If this is the first initial camera: we'll also move the actual
-          // camera. If not, we return immediately.
-          console.log(message.initial, wasDefault);
-          if (!wasDefault) return;
+          // Update store only; InitialCameraSetter will react to the
+          // source change and call resetCameraPose.
+          initialCameraActions.setPosition(message.position, "message");
+          return;
         }
 
         const cameraControls = viewerMutable.cameraControl!;
@@ -355,10 +384,11 @@ function useMessageHandler() {
       }
       case "SetCameraFovMessage": {
         // Setting initial camera parameters.
-        const wasDefault = initialCamera.getState().fov.source === "default";
+        const wasDefault =
+          viewer.useInitialCamera.get().fov.source === "default";
         if (message.initial) {
           // URL params take priority, ignore server's initial value.
-          initialCamera.getState().setFov(message.fov, "message");
+          initialCameraActions.setFov(message.fov, "message");
 
           // If this is the first initial camera: we'll also move the actual
           // camera. If not, we return immediately.
@@ -376,10 +406,11 @@ function useMessageHandler() {
       }
       case "SetCameraNearMessage": {
         // Setting initial camera parameters.
-        const wasDefault = initialCamera.getState().near.source === "default";
+        const wasDefault =
+          viewer.useInitialCamera.get().near.source === "default";
         if (message.initial) {
           // URL params take priority, ignore server's initial value.
-          initialCamera.getState().setNear(message.near, "message");
+          initialCameraActions.setNear(message.near, "message");
 
           // If this is the first initial camera: we'll also move the actual
           // camera. If not, we return immediately.
@@ -393,10 +424,11 @@ function useMessageHandler() {
       }
       case "SetCameraFarMessage": {
         // Setting initial camera parameters.
-        const wasDefault = initialCamera.getState().far.source === "default";
+        const wasDefault =
+          viewer.useInitialCamera.get().far.source === "default";
         if (message.initial) {
           // URL params take priority, ignore server's initial value.
-          initialCamera.getState().setFar(message.far, "message");
+          initialCameraActions.setFar(message.far, "message");
 
           // If this is the first initial camera: we'll also move the actual
           // camera. If not, we return immediately.
@@ -409,35 +441,66 @@ function useMessageHandler() {
         return;
       }
       case "SetOrientationMessage": {
-        const currentNode = viewer.useSceneTree.getState()[message.name];
-        const newPoseUpdateState =
-          currentNode?.poseUpdateState !== "waitForMakeObject"
-            ? "needsUpdate"
-            : currentNode?.poseUpdateState || "needsUpdate";
-        return {
-          targetNode: message.name,
-          updates: {
+        // Root node wxyz is kept in store for reactive world-rotation subscribers
+        // (DefaultLights, InitialCameraSetter, WorldTransformUtils).
+        // We also write to nodePoseData so the three.js object quaternion is
+        // updated in the SceneNodeThreeObject useFrame loop.
+        if (message.name === "") {
+          const rootPose = viewerMutable.nodePoseData[""];
+          if (rootPose) {
+            rootPose.wxyz = message.wxyz;
+            if (rootPose.poseUpdateState !== "waitForMakeObject") {
+              rootPose.poseUpdateState = "needsUpdate";
+            }
+          } else {
+            viewerMutable.nodePoseData[""] = {
+              wxyz: message.wxyz,
+              position: [0, 0, 0],
+              poseUpdateState: "needsUpdate",
+            };
+          }
+          return {
+            kind: "sceneNodeAttrUpdate",
+            targetNode: "",
+            updates: { wxyz: message.wxyz },
+          };
+        }
+        // All other nodes: write pose to mutable ref (no React re-render).
+        const pose = viewerMutable.nodePoseData[message.name];
+        if (pose) {
+          pose.wxyz = message.wxyz;
+          if (pose.poseUpdateState !== "waitForMakeObject") {
+            pose.poseUpdateState = "needsUpdate";
+          }
+        } else {
+          viewerMutable.nodePoseData[message.name] = {
             wxyz: message.wxyz,
-            poseUpdateState: newPoseUpdateState,
-          },
-        };
+            position: [0, 0, 0],
+            poseUpdateState: "needsUpdate",
+          };
+        }
+        return;
       }
       case "SetPositionMessage": {
-        const currentNode = viewer.useSceneTree.getState()[message.name];
-        const newPoseUpdateState =
-          currentNode?.poseUpdateState !== "waitForMakeObject"
-            ? "needsUpdate"
-            : currentNode?.poseUpdateState || "needsUpdate";
-        return {
-          targetNode: message.name,
-          updates: {
+        // Write pose to mutable ref (no React re-render).
+        const pose = viewerMutable.nodePoseData[message.name];
+        if (pose) {
+          pose.position = message.position;
+          if (pose.poseUpdateState !== "waitForMakeObject") {
+            pose.poseUpdateState = "needsUpdate";
+          }
+        } else {
+          viewerMutable.nodePoseData[message.name] = {
+            wxyz: [1, 0, 0, 0],
             position: message.position,
-            poseUpdateState: newPoseUpdateState,
-          },
-        };
+            poseUpdateState: "needsUpdate",
+          };
+        }
+        return;
       }
       case "SetSceneNodeVisibilityMessage": {
         return {
+          kind: "sceneNodeAttrUpdate",
           targetNode: message.name,
           updates: { visibility: message.visible },
         };
@@ -494,8 +557,7 @@ function useMessageHandler() {
       // Remove a scene node and its children by name.
       case "RemoveSceneNodeMessage": {
         console.log("Removing scene node:", message.name);
-        const sceneState = viewer.useSceneTree.getState();
-        if (!(message.name in sceneState)) {
+        if (viewer.useSceneTree.get(message.name) === undefined) {
           console.log("(OK) Skipping scene node removal for " + message.name);
           return;
         }
@@ -508,18 +570,40 @@ function useMessageHandler() {
       // Set the clickability of a particular scene node.
       case "SetSceneNodeClickableMessage": {
         return {
+          kind: "sceneNodeAttrUpdate",
           targetNode: message.name,
           updates: { clickable: message.clickable },
         };
       }
-      // Update props of a GUI component
+      // Set the drag-binding set for a particular scene node.
+      case "SetSceneNodeDragBindingsMessage": {
+        return {
+          kind: "sceneNodeAttrUpdate",
+          targetNode: message.name,
+          updates: { dragBindings: message.bindings },
+        };
+      }
+      // Update props of a GUI component — accumulated and applied in batch.
       case "GuiUpdateMessage": {
-        updateGuiProps(message.uuid, message.updates);
-        return;
+        return {
+          kind: "guiUpdate",
+          uuid: message.uuid,
+          updates: message.updates,
+        };
       }
       // Remove a GUI input.
       case "GuiRemoveMessage": {
         removeGui(message.uuid);
+        return;
+      }
+      // Broadcast to clients that a form was submitted; reset dirty state.
+      case "GuiFormSubmitMessage": {
+        clearFormDirty(message.uuid);
+        return;
+      }
+      // Broadcast to clients that a form has unsaved changes.
+      case "GuiFormDirtyMessage": {
+        setFormDirty(message.uuid);
         return;
       }
 
@@ -789,7 +873,10 @@ export function FrameSynchronizedMessageHandler() {
       }
 
       // Handle messages, but only if we're not trying to render something.
-      if (viewerMutable.getRenderRequestState === "ready") {
+      if (
+        viewerMutable.getRenderRequestState === "ready" &&
+        messageQueue.length > 0
+      ) {
         // Handle messages before every frame.
         // Place this directly in ws.onmessage can cause race conditions!
         //
@@ -815,12 +902,15 @@ export function FrameSynchronizedMessageHandler() {
           if (rootOrientationIndex !== -1) {
             const rootNodeUpdate = handleMessage(
               processBatch[rootOrientationIndex],
-            )!;
-            const rootNode = viewer.useSceneTree.getState()[""]!;
-            viewer.useSceneTree.setState({
+            );
+            const rootNode = viewer.useSceneTree.get("")!;
+            viewer.useSceneTree.set({
               "": {
                 ...rootNode,
-                wxyz: rootNodeUpdate.updates.wxyz!,
+                wxyz:
+                  rootNodeUpdate?.kind === "sceneNodeAttrUpdate"
+                    ? (rootNodeUpdate.updates.wxyz ?? rootNode.wxyz)
+                    : rootNode.wxyz,
               },
             });
 
@@ -829,36 +919,108 @@ export function FrameSynchronizedMessageHandler() {
           }
         }
 
-        // Handle messages and accumulate updates.
-        const updates = processBatch.map(handleMessage).reduce(
-          (acc, cur) => {
-            if (cur === undefined) return acc;
-            else {
-              // console.log(cur.targetNode);
-              return {
-                ...acc,
-                [cur.targetNode]: { ...acc[cur.targetNode], ...cur.updates },
-              };
-            }
-          },
-          {} as { [name: string]: any },
-        );
+        // Handle all messages and accumulate batched updates.
+        // Three kinds of updates are accumulated and applied as single setState calls:
+        // - attrUpdates: top-level SceneNode attributes (wxyz, position, visibility, etc.)
+        // - propsUpdates: message.props fields (batched_wxyzs, colors, etc.)
+        // - guiUpdates: GUI component property updates
+        const attrUpdates: { [name: string]: Partial<SceneNode> } = {};
+        const propsUpdates: { [name: string]: { [key: string]: any } } = {};
+        const guiUpdates: { uuid: string; updates: { [key: string]: any } }[] =
+          [];
 
-        // Apply accumulated prop updates to the zustand state.
-        const currentState = viewer.useSceneTree.getState();
-        const mergedUpdates: typeof updates = {};
-        for (const [k, v] of Object.entries(updates)) {
-          if (!(k in currentState)) {
+        for (const msg of processBatch) {
+          const result = handleMessage(msg);
+          if (result === undefined) continue;
+          switch (result.kind) {
+            case "sceneNodeAttrUpdate": {
+              const existing = attrUpdates[result.targetNode];
+              if (existing) {
+                Object.assign(existing, result.updates);
+              } else {
+                attrUpdates[result.targetNode] = { ...result.updates };
+              }
+              break;
+            }
+            case "sceneNodePropsUpdate": {
+              const existing = propsUpdates[result.targetNode];
+              if (existing) {
+                Object.assign(existing, result.propsUpdates);
+              } else {
+                propsUpdates[result.targetNode] = { ...result.propsUpdates };
+              }
+              break;
+            }
+            case "guiUpdate":
+              guiUpdates.push(result);
+              break;
+          }
+        }
+
+        // Apply all accumulated scene tree updates in a single set().
+        const mergedUpdates: { [name: string]: SceneNode } = {};
+
+        // Merge attribute-level updates (wxyz, position, visibility, etc.).
+        for (const [k, v] of Object.entries(attrUpdates)) {
+          const currentNode = viewer.useSceneTree.get(k);
+          if (currentNode === undefined) {
             console.log(`(OK) Tried to update non-existent scene node ${k}`);
             continue;
           }
-          mergedUpdates[k] = { ...currentState[k], ...v };
+          mergedUpdates[k] = { ...currentNode, ...v };
         }
-        viewer.useSceneTree.setState(mergedUpdates);
+
+        // Merge props-level updates (batched_wxyzs, colors, etc.).
+        for (const [k, v] of Object.entries(propsUpdates)) {
+          const currentNode = viewer.useSceneTree.get(k);
+          if (currentNode === undefined) {
+            console.log(`(OK) Tried to update non-existent scene node ${k}`);
+            continue;
+          }
+          const node = mergedUpdates[k] || currentNode;
+          mergedUpdates[k] = {
+            ...node,
+            message: {
+              ...node.message,
+              props: {
+                ...node.message.props,
+                ...v,
+              },
+            } as SceneNodeMessage,
+          };
+        }
+
+        if (Object.keys(mergedUpdates).length > 0) {
+          viewer.useSceneTree.set(mergedUpdates);
+        }
+
+        // Apply all accumulated GUI config updates in a single set().
+        if (guiUpdates.length > 0) {
+          const configUpdates: Record<string, GuiComponentMessage | undefined> =
+            {};
+          for (const { uuid, updates } of guiUpdates) {
+            const current =
+              configUpdates[uuid] ?? viewer.useGuiConfig.get(uuid);
+            if (current === undefined) {
+              console.error(
+                `Tried to update non-existent component '${uuid}'`,
+                updates,
+              );
+              continue;
+            }
+            const updated = applyGuiConfigUpdate(current, updates);
+            if (updated !== current) {
+              configUpdates[uuid] = updated;
+            }
+          }
+          if (Object.keys(configUpdates).length > 0) {
+            viewer.useGuiConfig.set(configUpdates);
+          }
+        }
 
         // Recompute effective visibility for nodes whose visibility changed.
         // This needs to be done after updates are applied.
-        for (const [nodeName, nodeState] of Object.entries(updates)) {
+        for (const [nodeName, nodeState] of Object.entries(attrUpdates)) {
           if ("visibility" in nodeState) {
             viewer.sceneTreeActions.computeEffectiveVisibility(nodeName);
           }
