@@ -2233,7 +2233,7 @@ class SetGuiPanelLabelMessage(Message, include_in_scene_serialization=False):
     label: Optional[str]
 
 @dataclasses.dataclass
-class BrowserInfoMessage(Message):
+class BrowserInfoMessage(Message, include_in_scene_serialization=False):
     """Message from client->server to get the browser info."""
 
     url: str
